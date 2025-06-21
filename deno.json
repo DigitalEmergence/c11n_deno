@@ -1,0 +1,13 @@
+{
+  "tasks": {
+    "dev": "deno run --allow-all --env --watch src/server/main.ts",
+    "start": "deno run --allow-all --env src/server/main.ts"
+  },
+  "imports": {
+    "oak": "https://deno.land/x/oak@v12.6.1/mod.ts",
+    "cors": "https://deno.land/x/cors@v1.2.2/mod.ts",
+    "neo4j": "https://deno.land/x/neo4j_lite_client@4.4.1-preview2/mod.ts",
+    "djwt": "https://deno.land/x/djwt@v3.0.1/mod.ts",
+    "bcrypt": "https://deno.land/x/bcrypt@v0.4.1/mod.ts"
+  }
+}

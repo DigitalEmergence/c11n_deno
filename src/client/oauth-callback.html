@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>OAuth Callback</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            margin: 0;
+            background: #f5f5f5;
+        }
+        .loading {
+            text-align: center;
+            color: #666;
+        }
+        .spinner {
+            border: 3px solid #f3f3f3;
+            border-top: 3px solid #007bff;
+            border-radius: 50%;
+            width: 30px;
+            height: 30px;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 20px;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body>
+    <div class="loading">
+        <div class="spinner"></div>
+        <p>Processing authentication...</p>
+    </div>
+
+    <script>
+        async function handleOAuthCallback() {
+            const urlParams = new URLSearchParams(window.location.search);
+            const code = urlParams.get('code');
+            const state = urlParams.get('state');
+            const error = urlParams.get('error');
+
+            if (error) {
+                console.error('OAuth error:', error);
+                if (window.opener) {
+                    window.opener.postMessage({ 
+                        type: 'oauth_error', 
+                        error: error 
+                    }, window.location.origin);
+                }
+                window.close();
+                return;
+            }
+
+            if (!code || state !== 'gcp') {
+                console.error('Invalid OAuth callback parameters');
+                if (window.opener) {
+                    window.opener.postMessage({ 
+                        type: 'oauth_error', 
+                        error: 'Invalid callback parameters' 
+                    }, window.location.origin);
+                }
+                window.close();
+                return;
+            }
+
+            try {
+                // Get the token from localStorage (set by the main app)
+                const token = localStorage.getItem('c11n_token');
+                if (!token) {
+                    throw new Error('No authentication token found');
+                }
+
+                // Send the code to the backend
+                const response = await fetch('/api/auth/gcp/callback', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${token}`
+                    },
+                    body: JSON.stringify({ code })
+                });
+
+                const result = await response.json();
+
+                if (response.ok) {
+                    console.log('✅ OAuth callback successful:', result);
+                    // Success - notify the parent window
+                    if (window.opener) {
+                        console.log('📤 Sending success message to parent window');
+                        window.opener.postMessage({ 
+                            type: 'oauth_success', 
+                            data: result 
+                        }, window.location.origin);
+                    } else {
+                        console.warn('⚠️ No parent window found');
+                    }
+                } else {
+                    console.error('❌ OAuth callback failed:', result);
+                    throw new Error(result.error || 'OAuth callback failed');
+                }
+            } catch (error) {
+                console.error('OAuth callback error:', error);
+                if (window.opener) {
+                    window.opener.postMessage({ 
+                        type: 'oauth_error', 
+                        error: error.message 
+                    }, window.location.origin);
+                }
+            }
+
+            // Close the popup
+            window.close();
+        }
+
+        // Run the callback handler when the page loads
+        handleOAuthCallback();
+    </script>
+</body>
+</html>
