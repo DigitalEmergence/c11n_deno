@@ -2,6 +2,7 @@ import { Router } from "oak";
 import { db } from "../services/database.ts";
 import { encrypt, decrypt } from "../services/encryption.ts";
 import { validateRequired, validateLength, sanitizeInput, ValidationError } from "../utils/validation.ts";
+import { DockerHubService } from "../services/dockerhub.ts";
 
 export const serviceProfileRoutes = new Router();
 
@@ -261,46 +262,202 @@ serviceProfileRoutes.delete("/api/service-profiles/:id", async (ctx) => {
 // Get available JSphere Docker images from DockerHub
 serviceProfileRoutes.get("/api/service-profiles/docker-images", async (ctx) => {
   try {
-    // Fetch JSphere images from DockerHub API
-    const response = await fetch("https://hub.docker.com/v2/repositories/greenantsolutions/jsphere/tags/?page_size=50");
+    const dockerHubService = new DockerHubService();
+    const images = await dockerHubService.getJSphereImages();
     
-    if (!response.ok) {
-      throw new Error("Failed to fetch from DockerHub");
-    }
-    
-    const data = await response.json();
-    
-    // Format the images for the frontend
-    const images = data.results?.map((tag: any) => ({
-      name: tag.name,
-      full_name: `mirror.gcr.io/greenantsolutions/jsphere:${tag.name}`,
-      digest: tag.digest,
-      last_updated: tag.last_updated,
-      size: tag.full_size
-    })) || [];
+    // Format the images for the frontend with mirror.gcr.io prefix
+    const formattedImages = images.map(image => ({
+      ...image,
+      full_name: `mirror.gcr.io/greenantsolutions/jsphere:${image.name}`
+    }));
 
-    ctx.response.body = { images };
+    ctx.response.body = { images: formattedImages };
   } catch (error) {
     console.error("Failed to fetch Docker images:", error);
+    ctx.response.status = 500;
+    ctx.response.body = { error: "Failed to fetch Docker images" };
+  }
+});
+
+// Check dependencies for a service profile (what deployments use it)
+serviceProfileRoutes.get("/api/service-profiles/:id/dependencies", async (ctx) => {
+  const userId = ctx.state.userId;
+  const profileId = ctx.params.id;
+  
+  try {
+    const dependencies = await db.run(`
+      MATCH (u:User {github_id: $userId})-[:OWNS]->(sp:ServiceProfile {id: $profileId})
+      OPTIONAL MATCH (sp)<-[:USES]-(d:Deployment)
+      RETURN sp, collect(d) as deployments
+    `, { userId, profileId });
+
+    if (dependencies.length === 0) {
+      ctx.response.status = 404;
+      ctx.response.body = { error: "Service profile not found" };
+      return;
+    }
+
+    const deployments = dependencies[0].deployments.map((d: any) => d.properties);
+    ctx.response.body = { 
+      canDelete: deployments.length === 0,
+      dependencies: deployments 
+    };
+  } catch (error) {
+    ctx.response.status = 500;
+    ctx.response.body = { error: "Failed to check dependencies" };
+  }
+});
+
+// Validate service profile configuration
+serviceProfileRoutes.post("/api/service-profiles/validate", async (ctx) => {
+  const body = await ctx.request.body({ type: "json" }).value;
+  
+  try {
+    const errors: any[] = [];
     
-    // Fallback to some default images if DockerHub is unavailable
-    const fallbackImages = [
-      {
-        name: "latest",
-        full_name: "mirror.gcr.io/greenantsolutions/jsphere:latest",
-        digest: null,
-        last_updated: new Date().toISOString(),
-        size: null
-      },
-      {
-        name: "stable",
-        full_name: "mirror.gcr.io/greenantsolutions/jsphere:stable",
-        digest: null,
-        last_updated: new Date().toISOString(),
-        size: null
+    // Validate required fields
+    if (!validateRequired(body.name)) {
+      errors.push({ field: "name", message: "Service profile name is required" });
+    }
+    if (!validateLength(body.name, 1, 50)) {
+      errors.push({ field: "name", message: "Service profile name must be 1-50 characters" });
+    }
+    if (!validateRequired(body.container_image_url)) {
+      errors.push({ field: "container_image_url", message: "Container image URL is required" });
+    }
+    if (!validateRequired(body.server_auth_token)) {
+      errors.push({ field: "server_auth_token", message: "Server auth token is required" });
+    }
+    
+    // Validate container image URL format
+    if (body.container_image_url) {
+      const dockerHubService = new DockerHubService();
+      const isValidImage = await dockerHubService.validateImageUrl(body.container_image_url);
+      if (!isValidImage) {
+        errors.push({ field: "container_image_url", message: "Invalid container image URL format" });
       }
-    ];
+    }
     
-    ctx.response.body = { images: fallbackImages };
+    // Validate memory options
+    const validMemoryOptions = ["512Mi", "1GiB", "2GiB", "4GiB", "8GiB", "16GiB", "32GiB"];
+    if (body.memory && !validMemoryOptions.includes(body.memory)) {
+      errors.push({ field: "memory", message: "Invalid memory option" });
+    }
+    
+    // Validate CPU options
+    const validCpuOptions = ["1", "2", "4", "6", "8"];
+    if (body.cpu && !validCpuOptions.includes(body.cpu)) {
+      errors.push({ field: "cpu", message: "Invalid CPU option" });
+    }
+    
+    // Validate execution environment
+    const validExecutionEnvs = ["gen1", "gen2", "default"];
+    if (body.execution_environment && !validExecutionEnvs.includes(body.execution_environment)) {
+      errors.push({ field: "execution_environment", message: "Invalid execution environment" });
+    }
+    
+    // Validate region
+    const validRegions = [
+      "us-central1", "us-east1", "us-west1", "europe-west1", "asia-east1", 
+      "asia-east2", "asia-northeast1", "asia-southeast1", "australia-southeast1", 
+      "southamerica-west1", "europe-north1"
+    ];
+    if (body.region && !validRegions.includes(body.region)) {
+      errors.push({ field: "region", message: "Invalid region" });
+    }
+    
+    // Validate environment variables
+    if (body.environment_variables && typeof body.environment_variables === 'object') {
+      for (const [key, value] of Object.entries(body.environment_variables)) {
+        if (!key || typeof key !== 'string') {
+          errors.push({ field: "environment_variables", message: "Environment variable keys must be non-empty strings" });
+          break;
+        }
+        if (!/^[A-Z_][A-Z0-9_]*$/i.test(key)) {
+          errors.push({ field: "environment_variables", message: `Invalid environment variable name: ${key}` });
+          break;
+        }
+      }
+    }
+    
+    ctx.response.body = { 
+      valid: errors.length === 0,
+      errors 
+    };
+  } catch (error) {
+    ctx.response.status = 500;
+    ctx.response.body = { error: "Failed to validate service profile" };
+  }
+});
+
+// Duplicate service profile
+serviceProfileRoutes.post("/api/service-profiles/:id/duplicate", async (ctx) => {
+  const userId = ctx.state.userId;
+  const profileId = ctx.params.id;
+  
+  try {
+    // Get the original profile
+    const profiles = await db.run(`
+      MATCH (u:User {github_id: $userId})-[:OWNS]->(sp:ServiceProfile {id: $profileId})
+      RETURN sp
+    `, { userId, profileId });
+
+    if (profiles.length === 0) {
+      ctx.response.status = 404;
+      ctx.response.body = { error: "Service profile not found" };
+      return;
+    }
+
+    const originalProfile = profiles[0].sp.properties;
+    const newProfileId = crypto.randomUUID();
+    const newName = `${originalProfile.name} (Copy)`;
+
+    // Create duplicate with new ID and name
+    await db.run(`
+      MATCH (u:User {github_id: $userId})
+      CREATE (sp:ServiceProfile {
+        id: $newProfileId,
+        name: $newName,
+        container_image_url: $container_image_url,
+        container_port: $container_port,
+        memory: $memory,
+        cpu: $cpu,
+        max_instances: $max_instances,
+        timeout: $timeout,
+        concurrency: $concurrency,
+        execution_environment: $execution_environment,
+        cpu_boost: $cpu_boost,
+        billing: $billing,
+        region: $region,
+        server_auth_token: $server_auth_token,
+        environment_variables: $environment_variables,
+        created_at: datetime(),
+        updated_at: datetime()
+      })
+      CREATE (u)-[:OWNS]->(sp)
+      RETURN sp
+    `, {
+      userId,
+      newProfileId,
+      newName,
+      container_image_url: originalProfile.container_image_url,
+      container_port: originalProfile.container_port,
+      memory: originalProfile.memory,
+      cpu: originalProfile.cpu,
+      max_instances: originalProfile.max_instances,
+      timeout: originalProfile.timeout,
+      concurrency: originalProfile.concurrency,
+      execution_environment: originalProfile.execution_environment,
+      cpu_boost: originalProfile.cpu_boost,
+      billing: originalProfile.billing,
+      region: originalProfile.region,
+      server_auth_token: originalProfile.server_auth_token,
+      environment_variables: originalProfile.environment_variables,
+    });
+
+    ctx.response.body = { success: true, profileId: newProfileId };
+  } catch (error) {
+    ctx.response.status = 500;
+    ctx.response.body = { error: "Failed to duplicate service profile" };
   }
 });

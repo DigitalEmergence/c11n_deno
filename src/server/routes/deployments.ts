@@ -6,6 +6,25 @@ import { validateDeploymentName, validateRequired, ValidationError } from "../ut
 
 export const deploymentRoutes = new Router();
 
+// Store for SSE connections
+const sseConnections = new Map<string, Set<any>>();
+
+// Helper function to broadcast real-time updates
+export function broadcastDeploymentUpdate(userId: string, data: any) {
+  const userConnections = sseConnections.get(userId);
+  if (userConnections) {
+    const message = `data: ${JSON.stringify(data)}\n\n`;
+    for (const controller of userConnections) {
+      try {
+        controller.enqueue(new TextEncoder().encode(message));
+      } catch (error) {
+        console.error('Failed to send SSE message:', error);
+        userConnections.delete(controller);
+      }
+    }
+  }
+}
+
 // Helper function to generate fallback metrics when GCP is unavailable
 function generateFallbackMetrics(deploymentName: string, status: string) {
   const now = new Date();
@@ -437,6 +456,75 @@ deploymentRoutes.get("/api/deployments/:id/logs", async (ctx) => {
   }
 });
 
+// Server-Sent Events endpoint for real-time updates
+deploymentRoutes.get("/api/deployments/events", async (ctx) => {
+  let userId = ctx.state.userId;
+
+  // If no userId from middleware (auth failed), try to get token from query parameter
+  if (!userId) {
+    const token = ctx.request.url.searchParams.get('token');
+    if (token) {
+      try {
+        // Import JWT utility to verify token
+        const { verifyJWT } = await import("../utils/jwt.ts");
+        const payload = await verifyJWT(token);
+        userId = payload.userId;
+        console.log(`📡 SSE authentication via query parameter for user: ${userId}`);
+      } catch (error) {
+        console.error('❌ SSE token verification failed:', error);
+        ctx.response.status = 401;
+        ctx.response.body = { error: "Invalid token" };
+        return;
+      }
+    } else {
+      console.error('❌ SSE connection attempted without authentication');
+      ctx.response.status = 401;
+      ctx.response.body = { error: "Authentication required" };
+      return;
+    }
+  }
+
+  // Set SSE headers
+  ctx.response.headers.set("Content-Type", "text/event-stream");
+  ctx.response.headers.set("Cache-Control", "no-cache");
+  ctx.response.headers.set("Connection", "keep-alive");
+  ctx.response.headers.set("Access-Control-Allow-Origin", "*");
+  ctx.response.headers.set("Access-Control-Allow-Headers", "Cache-Control");
+
+  // Create a readable stream for SSE
+  const body = new ReadableStream({
+    start(controller) {
+      // Store connection for this user
+      if (!sseConnections.has(userId)) {
+        sseConnections.set(userId, new Set());
+      }
+      sseConnections.get(userId)!.add(controller);
+
+      // Send initial connection message
+      const initialMessage = `data: ${JSON.stringify({
+        type: 'connection_established',
+        timestamp: new Date().toISOString()
+      })}\n\n`;
+      controller.enqueue(new TextEncoder().encode(initialMessage));
+
+      console.log(`📡 SSE connection established for user: ${userId}`);
+    },
+    cancel() {
+      // Remove connection when client disconnects
+      const userConnections = sseConnections.get(userId);
+      if (userConnections) {
+        userConnections.delete(controller);
+        if (userConnections.size === 0) {
+          sseConnections.delete(userId);
+        }
+      }
+      console.log(`📡 SSE connection closed for user: ${userId}`);
+    }
+  });
+
+  ctx.response.body = body;
+});
+
 // Sync deployments with GCP Cloud Run services
 deploymentRoutes.post("/api/deployments/sync", async (ctx) => {
   const userId = ctx.state.userId;
@@ -795,6 +883,15 @@ async function deployToGCP(deploymentId: string, user: any) {
     });
 
     console.log(`📝 Updated deployment record with URL: ${cloudRunUrl}`);
+
+    // Broadcast real-time update for URL retrieval
+    console.log(`📡 Broadcasting deployment URL update to user: ${user.github_id}`);
+    broadcastDeploymentUpdate(user.github_id, {
+      type: 'deployment_url_retrieved',
+      deploymentId,
+      url: cloudRunUrl,
+      timestamp: new Date().toISOString()
+    });
 
     // If config is linked, automatically load it to the JSphere instance
     if (config && cloudRunUrl) {

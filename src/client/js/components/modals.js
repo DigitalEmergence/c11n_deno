@@ -36,7 +36,7 @@ export class Modal {
             </button>
           ` : ''}
           ${options.primaryButton ? `
-            <button class="btn btn-primary" onclick="${options.primaryButton.action}">
+            <button class="btn btn-primary" onclick="${options.primaryButton.action}" ${options.primaryButton.disabled ? 'disabled' : ''}>
               ${options.primaryButton.text || 'Save'}
             </button>
           ` : ''}

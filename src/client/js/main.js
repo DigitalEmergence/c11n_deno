@@ -249,9 +249,11 @@ class C11NApp {
         this.api.get('/workspaces')
       ];
 
-      if (this.isGCPConnected) {
-        promises.push(this.api.get('/gcp/projects'));
-      }
+      // Only load GCP projects when specifically needed (not on every refresh)
+      // GCP projects don't change frequently, so we don't need to fetch them every time
+      // if (this.isGCPConnected) {
+      //   promises.push(this.api.get('/gcp/projects'));
+      // }
 
       const results = await Promise.all(promises);
       
@@ -1040,10 +1042,162 @@ class C11NApp {
   }
 
   startPolling() {
-    // Auto-refresh data every 60 seconds with sync and health checks
+    // Auto-refresh data every 10 minutes with sync and health checks
     setInterval(async () => {
       await this.autoRefreshWithSync();
-    }, 60000);
+    }, 600000);
+    
+    // Start real-time updates for deployment status changes
+    this.startRealTimeUpdates();
+  }
+
+  startRealTimeUpdates() {
+    // Use Server-Sent Events for real-time deployment updates
+    if (typeof EventSource !== 'undefined') {
+      // Include token as query parameter since EventSource doesn't support custom headers
+      const token = this.api.token;
+      const sseUrl = token ? `/api/deployments/events?token=${encodeURIComponent(token)}` : '/api/deployments/events';
+      
+      console.log('📡 Starting SSE connection to', sseUrl);
+      const eventSource = new EventSource(sseUrl);
+      
+      eventSource.onopen = (event) => {
+        console.log('✅ SSE connection opened:', event);
+      };
+      
+      eventSource.onmessage = (event) => {
+        console.log('📨 SSE message received:', event.data);
+        try {
+          const data = JSON.parse(event.data);
+          console.log('📊 Parsed SSE data:', data);
+          this.handleRealTimeUpdate(data);
+        } catch (error) {
+          console.error('❌ Failed to parse SSE data:', error, 'Raw data:', event.data);
+        }
+      };
+      
+      eventSource.onerror = (error) => {
+        console.error('❌ SSE connection error:', error);
+        console.log('📊 SSE readyState:', eventSource.readyState);
+        
+        // Close the current connection
+        eventSource.close();
+        
+        // Reconnect after 5 seconds
+        setTimeout(() => {
+          console.log('🔄 Reconnecting SSE...');
+          this.startRealTimeUpdates();
+        }, 5000);
+      };
+      
+      // Store reference for cleanup
+      this.eventSource = eventSource;
+    } else {
+      console.warn('⚠️ Server-Sent Events not supported, falling back to polling');
+    }
+  }
+
+  handleRealTimeUpdate(data) {
+    console.log('📡 Real-time update received:', data);
+    
+    switch (data.type) {
+      case 'deployment_status_changed':
+        this.handleDeploymentStatusUpdate(data);
+        break;
+      case 'deployment_url_retrieved':
+        this.handleDeploymentUrlUpdate(data);
+        break;
+      case 'local_server_status_changed':
+        this.handleLocalServerStatusUpdate(data);
+        break;
+      default:
+        console.log('Unknown update type:', data.type);
+    }
+  }
+
+  handleDeploymentStatusUpdate(data) {
+    const { deploymentId, status, message } = data;
+    
+    // Update deployment in local state
+    const deployment = this.deployments.find(d => d.id === deploymentId);
+    if (deployment) {
+      deployment.status = status;
+      if (message) deployment.status_message = message;
+      
+      // Update UI
+      if (this.serverTabs) {
+        this.serverTabs.update(this.deployments, this.localServers);
+      }
+      
+      // Show notification for important status changes
+      if (status === 'active') {
+        utils.showToast(`Deployment ${deployment.name} is now active!`, 'success');
+      } else if (status === 'error') {
+        utils.showToast(`Deployment ${deployment.name} failed: ${message}`, 'error');
+      }
+    }
+  }
+
+  handleDeploymentUrlUpdate(data) {
+    const { deploymentId, url } = data;
+    console.log(`📡 Processing deployment URL update for ID: ${deploymentId}, URL: ${url}`);
+    
+    // Update deployment in local state
+    const deployment = this.deployments.find(d => d.id === deploymentId);
+    if (deployment) {
+      console.log(`📦 Found deployment: ${deployment.name}, current URL: ${deployment.cloud_run_url}`);
+      
+      // Update the correct URL property (cloud_run_url, not url)
+      deployment.cloud_run_url = url;
+      deployment.status = 'active'; // URL retrieval means deployment is active
+      
+      console.log(`📝 Updated deployment ${deployment.name} with URL: ${url}`);
+      
+      // Update UI immediately
+      if (this.serverTabs) {
+        console.log(`🔄 Updating server tabs UI`);
+        this.serverTabs.update(this.deployments, this.localServers);
+      }
+      
+      // Show success notification with clickable URL
+      utils.showToast(`🚀 Deployment ${deployment.name} is live! <a href="${url}" target="_blank" style="color: white; text-decoration: underline;">Open App</a>`, 'success', 8000);
+      
+      console.log(`✅ Deployment ${deployment.name} URL updated successfully: ${url}`);
+    } else {
+      console.error(`❌ Deployment not found for ID: ${deploymentId}`);
+      console.log(`📋 Available deployments:`, this.deployments.map(d => ({ id: d.id, name: d.name })));
+    }
+  }
+
+  handleLocalServerStatusUpdate(data) {
+    const { serverId, status, message } = data;
+    
+    // Update local server in local state
+    const server = this.localServers.find(s => s.id === serverId);
+    if (server) {
+      server.status = status;
+      if (message) server.status_message = message;
+      
+      // Update UI
+      if (this.serverTabs) {
+        this.serverTabs.update(this.deployments, this.localServers);
+      }
+      
+      // Show notification for status changes
+      if (status === 'active') {
+        utils.showToast(`Local server on port ${server.port} is now active!`, 'success');
+      } else if (status === 'error') {
+        utils.showToast(`Local server on port ${server.port} error: ${message}`, 'error');
+      }
+    }
+  }
+
+  // Cleanup method for when app is destroyed
+  cleanup() {
+    if (this.eventSource) {
+      this.eventSource.close();
+      this.eventSource = null;
+    }
   }
 
   async autoRefreshWithSync() {
@@ -1297,10 +1451,18 @@ class C11NApp {
             <div class="service-profile-info">
               <div class="service-profile-name">${profile.name}</div>
               <div class="service-profile-description">${profile.container_image_url}</div>
+              <div class="service-profile-details">
+                <span class="profile-detail">Memory: ${profile.memory || '512Mi'}</span>
+                <span class="profile-detail">CPU: ${profile.cpu || '1'}</span>
+                <span class="profile-detail">Region: ${profile.region || 'us-central1'}</span>
+              </div>
             </div>
             <div class="service-profile-actions">
               <button class="btn btn-sm btn-secondary" onclick="window.app.editServiceProfile('${profile.id}')">
                 Edit
+              </button>
+              <button class="btn btn-sm btn-secondary" onclick="window.app.duplicateServiceProfile('${profile.id}')">
+                Duplicate
               </button>
               <button class="btn btn-sm btn-error" onclick="window.app.deleteServiceProfile('${profile.id}')">
                 Delete
@@ -1318,39 +1480,27 @@ class C11NApp {
   }
 
   showCreateServiceProfileModal() {
-    this.modal.show('Create Service Profile', `
-      <form id="service-profile-form">
-        <div class="form-group">
-          <label class="form-label">Profile Name *</label>
-          <input type="text" class="form-input" name="name" required placeholder="my-service-profile">
-          <div class="form-help">A unique name for this service profile</div>
-        </div>
-        <div class="form-group">
-          <label class="form-label">Container Image URL *</label>
-          <input type="text" class="form-input" name="container_image_url" required 
-                 placeholder="gcr.io/project/image:tag">
-          <div class="form-help">Docker container image URL</div>
-        </div>
-        <div class="form-group">
-          <label class="form-label">CPU Limit</label>
-          <input type="text" class="form-input" name="cpu_limit" value="1000m" placeholder="1000m">
-          <div class="form-help">CPU limit in millicores</div>
-        </div>
-        <div class="form-group">
-          <label class="form-label">Memory Limit</label>
-          <input type="text" class="form-input" name="memory_limit" value="512Mi" placeholder="512Mi">
-          <div class="form-help">Memory limit</div>
-        </div>
-      </form>
-    `, {
-      primaryButton: {
-        text: 'Create Profile',
-        action: 'window.app.createServiceProfile()'
-      },
-      secondaryButton: {
-        text: 'Cancel'
-      }
-    });
+    this.serviceProfileWizardData = {
+      step: 1,
+      name: '',
+      container_image_url: '',
+      container_port: '80',
+      memory: '512Mi',
+      cpu: '1',
+      max_instances: '100',
+      timeout: '300',
+      concurrency: '80',
+      execution_environment: 'gen2',
+      cpu_boost: true,
+      region: 'us-central1',
+      server_auth_token: '',
+      environment_variables: {},
+      dockerImages: [],
+      isEditMode: false,
+      editingId: null
+    };
+    
+    this.showServiceProfileWizardStep(1);
   }
 
   async createServiceProfile() {
@@ -1380,10 +1530,63 @@ class C11NApp {
     utils.showToast('Edit service profile feature coming soon', 'info');
   }
 
-  async deleteServiceProfile(id) {
-    if (!confirm('Are you sure you want to delete this service profile?')) return;
-
+  async editServiceProfile(id) {
     try {
+      // Load the existing profile data
+      const response = await this.api.get(`/service-profiles/${id}`);
+      const profile = response.serviceProfile;
+      
+      // Initialize wizard data with existing profile data
+      this.serviceProfileWizardData = {
+        step: 1,
+        name: profile.name,
+        container_image_url: profile.container_image_url,
+        container_port: profile.container_port || '80',
+        memory: profile.memory || '512Mi',
+        cpu: profile.cpu || '1',
+        max_instances: profile.max_instances || '100',
+        timeout: profile.timeout || '300',
+        concurrency: profile.concurrency || '80',
+        execution_environment: profile.execution_environment || 'gen2',
+        cpu_boost: profile.cpu_boost !== undefined ? profile.cpu_boost : true,
+        region: profile.region || 'us-central1',
+        server_auth_token: '', // Don't pre-fill for security
+        environment_variables: this.parseEnvironmentVariables(profile.environment_variables),
+        dockerImages: [],
+        isEditMode: true,
+        editingId: id
+      };
+      
+      this.showServiceProfileWizardStep(1);
+    } catch (error) {
+      utils.showToast('Failed to load service profile: ' + error.message, 'error');
+    }
+  }
+
+  async duplicateServiceProfile(id) {
+    try {
+      await this.api.post(`/service-profiles/${id}/duplicate`);
+      utils.showToast('Service profile duplicated successfully', 'success');
+      await this.loadServiceProfiles();
+      this.showManageServiceProfilesModal();
+    } catch (error) {
+      utils.showToast('Failed to duplicate service profile: ' + error.message, 'error');
+    }
+  }
+
+  async deleteServiceProfile(id) {
+    try {
+      // Check dependencies first
+      const response = await this.api.get(`/service-profiles/${id}/dependencies`);
+      
+      if (!response.canDelete) {
+        const dependentDeployments = response.dependencies.map(d => d.name).join(', ');
+        utils.showToast(`Cannot delete: Used by deployments: ${dependentDeployments}`, 'error');
+        return;
+      }
+      
+      if (!confirm('Are you sure you want to delete this service profile?')) return;
+
       await this.api.delete(`/service-profiles/${id}`);
       utils.showToast('Service profile deleted successfully', 'success');
       await this.loadServiceProfiles();
@@ -1391,6 +1594,487 @@ class C11NApp {
     } catch (error) {
       utils.showToast('Failed to delete service profile: ' + error.message, 'error');
     }
+  }
+
+  // Service Profile Wizard Methods
+  showServiceProfileWizardStep(step) {
+    this.serviceProfileWizardData.step = step;
+    
+    switch (step) {
+      case 1:
+        this.showServiceProfileStep1();
+        break;
+      case 2:
+        this.showServiceProfileStep2();
+        break;
+      case 3:
+        this.showServiceProfileStep3();
+        break;
+      case 4:
+        this.showServiceProfileStep4();
+        break;
+      case 5:
+        this.showServiceProfileStep5();
+        break;
+    }
+  }
+
+  showServiceProfileStep1() {
+    const title = this.serviceProfileWizardData.isEditMode ? 'Edit Service Profile - Step 1/5' : 'Create Service Profile - Step 1/5';
+    
+    this.modal.show(title, `
+      <div class="wizard-progress">
+        <div class="progress-bar">
+          <div class="progress-fill" style="width: 20%"></div>
+        </div>
+        <div class="step-indicator">Step 1 of 5: Basic Information</div>
+      </div>
+      
+      <form id="service-profile-step1-form">
+        <div class="form-group">
+          <label class="form-label">Service Profile Name *</label>
+          <input type="text" class="form-input" name="name" required 
+                 value="${this.serviceProfileWizardData.name}"
+                 placeholder="my-service-profile">
+          <div class="form-help">A unique name for this service profile</div>
+        </div>
+      </form>
+    `, {
+      primaryButton: {
+        text: 'Next',
+        action: 'window.app.serviceProfileWizardNext()'
+      },
+      secondaryButton: {
+        text: 'Cancel'
+      }
+    });
+  }
+
+  async showServiceProfileStep2() {
+    // Load Docker images if not already loaded
+    if (this.serviceProfileWizardData.dockerImages.length === 0) {
+      try {
+        const response = await this.api.get('/service-profiles/docker-images');
+        this.serviceProfileWizardData.dockerImages = response.images || [];
+      } catch (error) {
+        console.error('Failed to load Docker images:', error);
+      }
+    }
+
+    const title = this.serviceProfileWizardData.isEditMode ? 'Edit Service Profile - Step 2/5' : 'Create Service Profile - Step 2/5';
+    const dockerImageOptions = this.serviceProfileWizardData.dockerImages.map(image => 
+      `<option value="${image.full_name}" ${this.serviceProfileWizardData.container_image_url === image.full_name ? 'selected' : ''}>
+        ${image.name} (${image.full_name})
+      </option>`
+    ).join('');
+
+    this.modal.show(title, `
+      <div class="wizard-progress">
+        <div class="progress-bar">
+          <div class="progress-fill" style="width: 40%"></div>
+        </div>
+        <div class="step-indicator">Step 2 of 5: Container Configuration</div>
+      </div>
+      
+      <form id="service-profile-step2-form">
+        <div class="form-group">
+          <label class="form-label">Container Image *</label>
+          <select class="form-select" name="image_selection" onchange="window.app.onImageSelectionChange()">
+            <option value="">Choose an option...</option>
+            <optgroup label="JSphere Images">
+              ${dockerImageOptions}
+            </optgroup>
+            <option value="custom" ${!this.serviceProfileWizardData.dockerImages.some(img => img.full_name === this.serviceProfileWizardData.container_image_url) && this.serviceProfileWizardData.container_image_url ? 'selected' : ''}>
+              Custom Image URL
+            </option>
+          </select>
+        </div>
+        
+        <div id="custom-image-input" style="display: ${!this.serviceProfileWizardData.dockerImages.some(img => img.full_name === this.serviceProfileWizardData.container_image_url) && this.serviceProfileWizardData.container_image_url ? 'block' : 'none'};">
+          <div class="form-group">
+            <label class="form-label">Custom Image URL *</label>
+            <input type="text" class="form-input" name="container_image_url" 
+                   value="${this.serviceProfileWizardData.container_image_url}"
+                   placeholder="gcr.io/project/image:tag">
+            <div class="form-help">Enter a custom Docker image URL</div>
+          </div>
+        </div>
+        
+        <div class="form-group">
+          <label class="form-label">Container Port</label>
+          <input type="number" class="form-input" name="container_port" 
+                 value="${this.serviceProfileWizardData.container_port}" 
+                 min="1" max="65535">
+          <div class="form-help">Port that your application listens on (default: 80)</div>
+        </div>
+      </form>
+    `, {
+      primaryButton: {
+        text: 'Next',
+        action: 'window.app.serviceProfileWizardNext()'
+      },
+      secondaryButton: {
+        text: 'Back',
+        action: 'window.app.serviceProfileWizardBack()'
+      }
+    });
+  }
+
+  showServiceProfileStep3() {
+    const title = this.serviceProfileWizardData.isEditMode ? 'Edit Service Profile - Step 3/5' : 'Create Service Profile - Step 3/5';
+    
+    this.modal.show(title, `
+      <div class="wizard-progress">
+        <div class="progress-bar">
+          <div class="progress-fill" style="width: 60%"></div>
+        </div>
+        <div class="step-indicator">Step 3 of 5: Resource Configuration</div>
+      </div>
+      
+      <form id="service-profile-step3-form">
+        <div class="form-row">
+          <div class="form-group">
+            <label class="form-label">Memory</label>
+            <select class="form-select" name="memory">
+              <option value="512Mi" ${this.serviceProfileWizardData.memory === '512Mi' ? 'selected' : ''}>512 MiB</option>
+              <option value="1GiB" ${this.serviceProfileWizardData.memory === '1GiB' ? 'selected' : ''}>1 GiB</option>
+              <option value="2GiB" ${this.serviceProfileWizardData.memory === '2GiB' ? 'selected' : ''}>2 GiB</option>
+              <option value="4GiB" ${this.serviceProfileWizardData.memory === '4GiB' ? 'selected' : ''}>4 GiB</option>
+              <option value="8GiB" ${this.serviceProfileWizardData.memory === '8GiB' ? 'selected' : ''}>8 GiB</option>
+              <option value="16GiB" ${this.serviceProfileWizardData.memory === '16GiB' ? 'selected' : ''}>16 GiB</option>
+              <option value="32GiB" ${this.serviceProfileWizardData.memory === '32GiB' ? 'selected' : ''}>32 GiB</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label class="form-label">CPU</label>
+            <select class="form-select" name="cpu">
+              <option value="1" ${this.serviceProfileWizardData.cpu === '1' ? 'selected' : ''}>1 vCPU</option>
+              <option value="2" ${this.serviceProfileWizardData.cpu === '2' ? 'selected' : ''}>2 vCPU</option>
+              <option value="4" ${this.serviceProfileWizardData.cpu === '4' ? 'selected' : ''}>4 vCPU</option>
+              <option value="6" ${this.serviceProfileWizardData.cpu === '6' ? 'selected' : ''}>6 vCPU</option>
+              <option value="8" ${this.serviceProfileWizardData.cpu === '8' ? 'selected' : ''}>8 vCPU</option>
+            </select>
+          </div>
+        </div>
+        
+        <div class="form-group">
+          <label class="form-label">Max Instances</label>
+          <input type="number" class="form-input" name="max_instances" 
+                 value="${this.serviceProfileWizardData.max_instances}" 
+                 min="1" max="1000">
+          <div class="form-help">Maximum number of instances (default: 100)</div>
+        </div>
+      </form>
+    `, {
+      primaryButton: {
+        text: 'Next',
+        action: 'window.app.serviceProfileWizardNext()'
+      },
+      secondaryButton: {
+        text: 'Back',
+        action: 'window.app.serviceProfileWizardBack()'
+      }
+    });
+  }
+
+  showServiceProfileStep4() {
+    const title = this.serviceProfileWizardData.isEditMode ? 'Edit Service Profile - Step 4/5' : 'Create Service Profile - Step 4/5';
+    const regions = [
+      'us-central1', 'us-east1', 'us-west1', 'europe-west1', 'asia-east1',
+      'asia-east2', 'asia-northeast1', 'asia-southeast1', 'australia-southeast1',
+      'southamerica-west1', 'europe-north1'
+    ];
+    
+    this.modal.show(title, `
+      <div class="wizard-progress">
+        <div class="progress-bar">
+          <div class="progress-fill" style="width: 80%"></div>
+        </div>
+        <div class="step-indicator">Step 4 of 5: Runtime Settings</div>
+      </div>
+      
+      <form id="service-profile-step4-form">
+        <div class="form-row">
+          <div class="form-group">
+            <label class="form-label">Timeout (seconds)</label>
+            <input type="number" class="form-input" name="timeout" 
+                   value="${this.serviceProfileWizardData.timeout}" 
+                   min="1" max="3600">
+          </div>
+          <div class="form-group">
+            <label class="form-label">Concurrency</label>
+            <input type="number" class="form-input" name="concurrency" 
+                   value="${this.serviceProfileWizardData.concurrency}" 
+                   min="1" max="1000">
+          </div>
+        </div>
+        
+        <div class="form-row">
+          <div class="form-group">
+            <label class="form-label">Execution Environment</label>
+            <select class="form-select" name="execution_environment">
+              <option value="gen2" ${this.serviceProfileWizardData.execution_environment === 'gen2' ? 'selected' : ''}>Generation 2</option>
+              <option value="gen1" ${this.serviceProfileWizardData.execution_environment === 'gen1' ? 'selected' : ''}>Generation 1</option>
+              <option value="default" ${this.serviceProfileWizardData.execution_environment === 'default' ? 'selected' : ''}>Default</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Region</label>
+            <select class="form-select" name="region">
+              ${regions.map(region => 
+                `<option value="${region}" ${this.serviceProfileWizardData.region === region ? 'selected' : ''}>${region}</option>`
+              ).join('')}
+            </select>
+          </div>
+        </div>
+        
+        <div class="form-group">
+          <label class="form-label">
+            <input type="checkbox" name="cpu_boost" ${this.serviceProfileWizardData.cpu_boost ? 'checked' : ''}>
+            Enable CPU Boost
+          </label>
+          <div class="form-help">Allocate additional CPU during startup (recommended)</div>
+        </div>
+      </form>
+    `, {
+      primaryButton: {
+        text: 'Next',
+        action: 'window.app.serviceProfileWizardNext()'
+      },
+      secondaryButton: {
+        text: 'Back',
+        action: 'window.app.serviceProfileWizardBack()'
+      }
+    });
+  }
+
+  showServiceProfileStep5() {
+    const title = this.serviceProfileWizardData.isEditMode ? 'Edit Service Profile - Step 5/5' : 'Create Service Profile - Step 5/5';
+    const envVarsHtml = Object.entries(this.serviceProfileWizardData.environment_variables).map(([key, value]) => `
+      <div class="env-var-row">
+        <input type="text" class="form-input" value="${key}" placeholder="Variable Name" 
+               onchange="window.app.updateServiceProfileEnvVar(this, '${key}', 'key')">
+        <input type="text" class="form-input" value="${value}" placeholder="Variable Value" 
+               onchange="window.app.updateServiceProfileEnvVar(this, '${key}', 'value')">
+        <button type="button" class="btn btn-sm btn-error" onclick="window.app.removeServiceProfileEnvVar('${key}')">Remove</button>
+      </div>
+    `).join('');
+
+    this.modal.show(title, `
+      <div class="wizard-progress">
+        <div class="progress-bar">
+          <div class="progress-fill" style="width: 100%"></div>
+        </div>
+        <div class="step-indicator">Step 5 of 5: Environment Variables</div>
+      </div>
+      
+      <form id="service-profile-step5-form">
+        <div class="form-group">
+          <label class="form-label">Server Auth Token *</label>
+          <input type="password" class="form-input" name="server_auth_token" required
+                 value="${this.serviceProfileWizardData.server_auth_token}"
+                 placeholder="Enter authentication token">
+          <div class="form-help">Authentication token for the JSphere server</div>
+        </div>
+        
+        <div class="form-group">
+          <label class="form-label">Custom Environment Variables</label>
+          <div id="env-vars-container">
+            ${envVarsHtml}
+          </div>
+          <button type="button" class="btn btn-sm btn-secondary" onclick="window.app.addServiceProfileEnvVar()">
+            Add Environment Variable
+          </button>
+          <div class="form-help">Additional environment variables for your application</div>
+        </div>
+        
+        <div class="config-section">
+          <h4>Service Profile Summary</h4>
+          <div class="config-summary">
+            <div class="summary-item"><strong>Name:</strong> ${this.serviceProfileWizardData.name}</div>
+            <div class="summary-item"><strong>Image:</strong> ${this.serviceProfileWizardData.container_image_url}</div>
+            <div class="summary-item"><strong>Port:</strong> ${this.serviceProfileWizardData.container_port}</div>
+            <div class="summary-item"><strong>Memory:</strong> ${this.serviceProfileWizardData.memory}</div>
+            <div class="summary-item"><strong>CPU:</strong> ${this.serviceProfileWizardData.cpu}</div>
+            <div class="summary-item"><strong>Region:</strong> ${this.serviceProfileWizardData.region}</div>
+          </div>
+        </div>
+      </form>
+    `, {
+      primaryButton: {
+        text: this.serviceProfileWizardData.isEditMode ? 'Update Profile' : 'Create Profile',
+        action: 'window.app.saveServiceProfile()'
+      },
+      secondaryButton: {
+        text: 'Back',
+        action: 'window.app.serviceProfileWizardBack()'
+      }
+    });
+  }
+
+  // Service Profile Wizard Navigation
+  serviceProfileWizardNext() {
+    const currentStep = this.serviceProfileWizardData.step;
+    const form = document.getElementById(`service-profile-step${currentStep}-form`);
+    
+    if (form && !utils.validateForm(form)) return;
+    
+    // Save current step data
+    this.saveServiceProfileStepData();
+    
+    // Move to next step
+    this.showServiceProfileWizardStep(currentStep + 1);
+  }
+
+  serviceProfileWizardBack() {
+    const currentStep = this.serviceProfileWizardData.step;
+    this.saveServiceProfileStepData();
+    this.showServiceProfileWizardStep(currentStep - 1);
+  }
+
+  saveServiceProfileStepData() {
+    const step = this.serviceProfileWizardData.step;
+    const form = document.getElementById(`service-profile-step${step}-form`);
+    
+    if (!form) return;
+    
+    const formData = new FormData(form);
+    for (const [key, value] of formData.entries()) {
+      if (key === 'cpu_boost') {
+        this.serviceProfileWizardData[key] = form.querySelector(`input[name="${key}"]`).checked;
+      } else {
+        this.serviceProfileWizardData[key] = value;
+      }
+    }
+    
+    // Special handling for step 2 - container image URL
+    if (step === 2) {
+      const imageSelection = form.querySelector('select[name="image_selection"]');
+      const customImageInput = form.querySelector('input[name="container_image_url"]');
+      
+      if (imageSelection && imageSelection.value === 'custom' && customImageInput) {
+        this.serviceProfileWizardData.container_image_url = customImageInput.value;
+      } else if (imageSelection && imageSelection.value && imageSelection.value !== 'custom') {
+        this.serviceProfileWizardData.container_image_url = imageSelection.value;
+      }
+    }
+  }
+
+  // Environment Variables Management
+  addServiceProfileEnvVar() {
+    const key = `ENV_VAR_${Date.now()}`;
+    this.serviceProfileWizardData.environment_variables[key] = '';
+    this.refreshServiceProfileEnvVars();
+  }
+
+  removeServiceProfileEnvVar(key) {
+    delete this.serviceProfileWizardData.environment_variables[key];
+    this.refreshServiceProfileEnvVars();
+  }
+
+  updateServiceProfileEnvVar(input, oldKey, type) {
+    const value = input.value;
+    
+    if (type === 'key') {
+      const oldValue = this.serviceProfileWizardData.environment_variables[oldKey];
+      delete this.serviceProfileWizardData.environment_variables[oldKey];
+      this.serviceProfileWizardData.environment_variables[value] = oldValue;
+    } else {
+      this.serviceProfileWizardData.environment_variables[oldKey] = value;
+    }
+  }
+
+  refreshServiceProfileEnvVars() {
+    const container = document.getElementById('env-vars-container');
+    if (!container) return;
+    
+    const envVarsHtml = Object.entries(this.serviceProfileWizardData.environment_variables).map(([key, value]) => `
+      <div class="env-var-row">
+        <input type="text" class="form-input" value="${key}" placeholder="Variable Name" 
+               onchange="window.app.updateServiceProfileEnvVar(this, '${key}', 'key')">
+        <input type="text" class="form-input" value="${value}" placeholder="Variable Value" 
+               onchange="window.app.updateServiceProfileEnvVar(this, '${key}', 'value')">
+        <button type="button" class="btn btn-sm btn-error" onclick="window.app.removeServiceProfileEnvVar('${key}')">Remove</button>
+      </div>
+    `).join('');
+    
+    container.innerHTML = envVarsHtml;
+  }
+
+  // Image Selection Handler
+  onImageSelectionChange() {
+    const select = document.querySelector('select[name="image_selection"]');
+    const customInput = document.getElementById('custom-image-input');
+    const imageUrlInput = document.querySelector('input[name="container_image_url"]');
+    
+    if (select.value === 'custom') {
+      customInput.style.display = 'block';
+      imageUrlInput.required = true;
+    } else if (select.value) {
+      customInput.style.display = 'none';
+      imageUrlInput.required = false;
+      this.serviceProfileWizardData.container_image_url = select.value;
+    } else {
+      customInput.style.display = 'none';
+      imageUrlInput.required = false;
+    }
+  }
+
+  // Save Service Profile
+  async saveServiceProfile() {
+    // Save final step data
+    this.saveServiceProfileStepData();
+    
+    try {
+      const profileData = {
+        name: this.serviceProfileWizardData.name,
+        container_image_url: this.serviceProfileWizardData.container_image_url,
+        container_port: this.serviceProfileWizardData.container_port,
+        memory: this.serviceProfileWizardData.memory,
+        cpu: this.serviceProfileWizardData.cpu,
+        max_instances: this.serviceProfileWizardData.max_instances,
+        timeout: this.serviceProfileWizardData.timeout,
+        concurrency: this.serviceProfileWizardData.concurrency,
+        execution_environment: this.serviceProfileWizardData.execution_environment,
+        cpu_boost: this.serviceProfileWizardData.cpu_boost,
+        region: this.serviceProfileWizardData.region,
+        server_auth_token: this.serviceProfileWizardData.server_auth_token,
+        environment_variables: this.serviceProfileWizardData.environment_variables
+      };
+
+      if (this.serviceProfileWizardData.isEditMode) {
+        await this.api.put(`/service-profiles/${this.serviceProfileWizardData.editingId}`, profileData);
+        utils.showToast('Service profile updated successfully!', 'success');
+      } else {
+        await this.api.post('/service-profiles', profileData);
+        utils.showToast('Service profile created successfully!', 'success');
+      }
+      
+      this.modal.hide();
+      await this.loadServiceProfiles();
+    } catch (error) {
+      utils.showToast('Failed to save service profile: ' + error.message, 'error');
+    }
+  }
+
+  // Helper method to parse environment variables from string format
+  parseEnvironmentVariables(envVarsString) {
+    const envVars = {};
+    if (!envVarsString) return envVars;
+    
+    const lines = envVarsString.split('\n');
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (trimmed && trimmed.includes('=')) {
+        const [key, ...valueParts] = trimmed.split('=');
+        const value = valueParts.join('=');
+        if (key && key !== 'SERVER_HTTP_PORT') { // Exclude system variables
+          envVars[key] = value;
+        }
+      }
+    }
+    
+    return envVars;
   }
 
   // GCP Project Management
@@ -1516,6 +2200,11 @@ class C11NApp {
   }
 
   showCreateWorkspaceModal() {
+    this.workspaceValidationData = {
+      isConnected: false,
+      userInfo: null
+    };
+
     this.modal.show('Create Workspace', `
       <form id="workspace-form">
         <div class="form-group">
@@ -1535,11 +2224,29 @@ class C11NApp {
                  placeholder="ghp_...">
           <div class="form-help">GitHub personal access token with repo access</div>
         </div>
+        <div class="form-group">
+          <button type="button" class="btn btn-secondary" onclick="window.app.validateWorkspaceCredentials()" 
+                  id="validate-workspace-btn">
+            Connect & Validate
+          </button>
+          <div id="workspace-validation-result" class="form-help"></div>
+        </div>
+        <div id="workspace-user-info" style="display: none;" class="form-group">
+          <div class="user-info-card">
+            <img id="workspace-user-avatar" src="" alt="" class="user-avatar">
+            <div class="user-details">
+              <div id="workspace-user-name" class="user-name"></div>
+              <div id="workspace-user-username" class="user-username"></div>
+              <div id="workspace-projects-count" class="user-projects"></div>
+            </div>
+          </div>
+        </div>
       </form>
     `, {
       primaryButton: {
         text: 'Create Workspace',
-        action: 'window.app.createWorkspace()'
+        action: 'window.app.createWorkspace()',
+        disabled: true
       },
       secondaryButton: {
         text: 'Cancel'
@@ -1547,9 +2254,71 @@ class C11NApp {
     });
   }
 
+  async validateWorkspaceCredentials() {
+    const form = document.getElementById('workspace-form');
+    const formData = new FormData(form);
+    const namespace = formData.get('project_namespace');
+    const token = formData.get('project_auth_token');
+    
+    if (!namespace || !token) {
+      utils.showToast('Please enter both username and token', 'error');
+      return;
+    }
+
+    const btn = document.getElementById('validate-workspace-btn');
+    const result = document.getElementById('workspace-validation-result');
+    const userInfo = document.getElementById('workspace-user-info');
+    
+    btn.textContent = 'Validating...';
+    btn.disabled = true;
+
+    try {
+      const response = await this.api.post('/workspaces/validate-credentials', {
+        project_namespace: namespace,
+        project_auth_token: token
+      });
+      
+      this.workspaceValidationData.isConnected = true;
+      this.workspaceValidationData.userInfo = response;
+      
+      result.innerHTML = '<span class="text-success">✓ Credentials validated successfully</span>';
+      
+      // Show user info
+      document.getElementById('workspace-user-avatar').src = response.avatar_url;
+      document.getElementById('workspace-user-name').textContent = response.name || response.username;
+      document.getElementById('workspace-user-username').textContent = '@' + response.username;
+      document.getElementById('workspace-projects-count').textContent = `${response.projects.length} projects found`;
+      userInfo.style.display = 'block';
+      
+      // Enable create button
+      const createBtn = document.querySelector('.modal-footer .btn-primary');
+      if (createBtn) {
+        createBtn.disabled = false;
+      }
+    } catch (error) {
+      result.innerHTML = '<span class="text-error">✗ Validation failed: ' + error.message + '</span>';
+      this.workspaceValidationData.isConnected = false;
+      userInfo.style.display = 'none';
+      
+      // Keep create button disabled
+      const createBtn = document.querySelector('.modal-footer .btn-primary');
+      if (createBtn) {
+        createBtn.disabled = true;
+      }
+    } finally {
+      btn.textContent = 'Connect & Validate';
+      btn.disabled = false;
+    }
+  }
+
   async createWorkspace() {
     const form = document.getElementById('workspace-form');
     if (!utils.validateForm(form)) return;
+
+    if (!this.workspaceValidationData.isConnected) {
+      utils.showToast('Please validate credentials first', 'error');
+      return;
+    }
 
     const formData = new FormData(form);
     const workspaceData = {
@@ -1604,7 +2373,7 @@ class C11NApp {
   }
 
   // Config Wizard Helper Methods
-  onWorkspaceSelectionChange() {
+  async onWorkspaceSelectionChange() {
     const select = document.querySelector('select[name="workspace_selection"]');
     const manualCredentials = document.getElementById('manual-credentials');
     const workspaceSelected = document.getElementById('workspace-selected');
@@ -1617,7 +2386,31 @@ class C11NApp {
       manualCredentials.style.display = 'none';
       workspaceSelected.style.display = 'block';
       this.configWizardData.workspace_id = select.value;
-      this.configWizardData.isConnected = true;
+      
+      // Load projects from the selected workspace
+      try {
+        const response = await this.api.get(`/workspaces/${select.value}/github/projects`);
+        this.configWizardData.githubProjects = response.projects || [];
+        this.configWizardData.isConnected = true;
+        
+        // Find the workspace to get namespace
+        const workspace = this.workspaces.find(w => w.id === select.value);
+        if (workspace) {
+          this.configWizardData.project_namespace = workspace.project_namespace;
+        }
+      } catch (error) {
+        console.error('Failed to load workspace projects:', error);
+        utils.showToast('Failed to load projects from workspace', 'error');
+        this.configWizardData.isConnected = false;
+      }
+    } else if (select.value === 'create_new') {
+      manualCredentials.style.display = 'none';
+      workspaceSelected.style.display = 'none';
+      this.configWizardData.isConnected = false;
+      // Redirect to workspace creation
+      this.modal.hide();
+      this.showCreateWorkspaceModal();
+      return;
     } else {
       manualCredentials.style.display = 'none';
       workspaceSelected.style.display = 'none';
@@ -1649,13 +2442,17 @@ class C11NApp {
     btn.disabled = true;
 
     try {
-      const response = await this.api.post('/github/validate', {
+      const response = await this.api.post('/configs/github/validate', {
         namespace,
         token
       });
       
-      this.configWizardData.githubProjects = response.projects || [];
+      // Get projects for this user
+      const projectsResponse = await this.api.get(`/configs/github/projects?namespace=${namespace}&token=${token}`);
+      this.configWizardData.githubProjects = projectsResponse.projects || [];
       this.configWizardData.isConnected = true;
+      this.configWizardData.project_namespace = namespace;
+      this.configWizardData.project_auth_token = token;
       
       result.innerHTML = '<span class="text-success">✓ Credentials validated successfully</span>';
       
@@ -1682,15 +2479,18 @@ class C11NApp {
     this.configWizardData.project_name = projectName;
     
     try {
-      // Load app configs for the selected project
-      const response = await this.api.post('/github/app-configs', {
-        namespace: this.configWizardData.project_namespace,
-        token: this.configWizardData.project_auth_token,
-        projectName: '.' + projectName
-      });
+      // Load app configs and references for the selected project
+      const [appConfigsResponse, referencesResponse] = await Promise.all([
+        this.configWizardData.workspace_id 
+          ? this.api.get(`/workspaces/${this.configWizardData.workspace_id}/github/app-configs?project=${projectName}`)
+          : this.api.get(`/configs/github/app-configs?namespace=${this.configWizardData.project_namespace}&project=${projectName}&token=${this.configWizardData.project_auth_token}`),
+        this.configWizardData.workspace_id
+          ? this.api.get(`/workspaces/${this.configWizardData.workspace_id}/github/references?project=${projectName}`)
+          : this.api.get(`/configs/github/references?namespace=${this.configWizardData.project_namespace}&project=${projectName}&token=${this.configWizardData.project_auth_token}`)
+      ]);
       
-      this.configWizardData.appConfigs = response.appConfigs || [];
-      this.configWizardData.references = response.references || { branches: [], tags: [] };
+      this.configWizardData.appConfigs = appConfigsResponse.appConfigs || [];
+      this.configWizardData.references = referencesResponse || { branches: [], tags: [] };
       
       // Update button state
       const nextBtn = document.querySelector('.modal-footer .btn-primary');

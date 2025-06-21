@@ -462,3 +462,56 @@ workspaceRoutes.get("/api/workspaces/:id/github/references", async (ctx) => {
     ctx.response.body = { error: "Failed to fetch repository references" };
   }
 });
+
+// Validate GitHub credentials before creating workspace
+workspaceRoutes.post("/api/workspaces/validate-credentials", async (ctx) => {
+  const body = await ctx.request.body({ type: "json" }).value;
+
+  try {
+    if (!validateRequired(body.project_namespace)) {
+      throw new ValidationError("GitHub username is required", "project_namespace");
+    }
+    if (!validateRequired(body.project_auth_token)) {
+      throw new ValidationError("GitHub token is required", "project_auth_token");
+    }
+
+    // Validate GitHub credentials
+    const user = await github.getUser(body.project_auth_token);
+    
+    // Check if the token belongs to the specified namespace (case-insensitive)
+    if (user.login.toLowerCase() !== body.project_namespace.toLowerCase()) {
+      ctx.response.status = 400;
+      ctx.response.body = { 
+        error: `Token belongs to '${user.login}', not '${body.project_namespace}'. Please use the correct username.`,
+        actualUsername: user.login,
+        expectedUsername: body.project_namespace
+      };
+      return;
+    }
+
+    // Get projects for this user
+    const repos = await github.getUserRepos(body.project_auth_token);
+    const projectRepos = repos.filter((repo: any) => 
+      repo.name.startsWith('.') && repo.owner.login === body.project_namespace
+    );
+
+    ctx.response.body = { 
+      valid: true, 
+      username: user.login,
+      name: user.name,
+      avatar_url: user.avatar_url,
+      projects: projectRepos
+    };
+  } catch (error) {
+    if (error instanceof ValidationError) {
+      ctx.response.status = 400;
+      ctx.response.body = { error: error.message, field: error.field };
+    } else {
+      ctx.response.status = 400;
+      ctx.response.body = { 
+        valid: false, 
+        error: "Invalid GitHub token or username" 
+      };
+    }
+  }
+});
