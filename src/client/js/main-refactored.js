@@ -213,12 +213,12 @@ class C11NApp {
         <button class="btn btn-warning" onclick="window.app.reconnectGCP()" title="GCP token expired - click to reconnect">
           ⚠️ Reconnect GCP
         </button>
-        <div class="dropdown">
+        <div class="gcp-dropdown">
           <button class="btn btn-icon btn-secondary dropdown-toggle" onclick="window.app.toggleGCPMenu(event)" title="GCP Options">
-            ⚙️
+            <img src="assets/icons/c11n_settings_icon.png" alt="GCP Options" class="settings-icon" id="gcp-settings-icon">
           </button>
-          <div class="dropdown-menu">
-            <div class="dropdown-item" onclick="window.app.disconnectGCP()">
+          <div class="gcp-dropdown-menu hidden">
+            <div class="gcp-dropdown-item" onclick="window.app.disconnectGCP()">
               <i class="fas fa-unlink"></i> Disconnect GCP
             </div>
           </div>
@@ -230,15 +230,15 @@ class C11NApp {
         <button class="btn btn-success" onclick="window.app.showGCPInfo()" title="Connected to ${currentProject}">
           ✓ GCP Connected
         </button>
-        <div class="dropdown">
+        <div class="gcp-dropdown">
           <button class="btn btn-icon btn-secondary dropdown-toggle" onclick="window.app.toggleGCPMenu(event)" title="GCP Options">
-            ⚙️
+            <img src="assets/icons/c11n_settings_icon.png" alt="GCP Options" class="settings-icon" id="gcp-settings-icon">
           </button>
-          <div class="dropdown-menu hidden">
-            <div class="dropdown-item" onclick="window.app.showSelectGCPProjectModal()">
+          <div class="gcp-dropdown-menu hidden">
+            <div class="gcp-dropdown-item" onclick="window.app.showSelectGCPProjectModal()">
               <i class="fas fa-exchange-alt"></i> Change Project
             </div>
-            <div class="dropdown-item" onclick="window.app.disconnectGCP()">
+            <div class="gcp-dropdown-item" onclick="window.app.disconnectGCP()">
               <i class="fas fa-unlink"></i> Disconnect GCP
             </div>
           </div>
@@ -249,20 +249,22 @@ class C11NApp {
     document.getElementById('app').innerHTML = `
       <nav id="navbar"></nav>
       <main class="main-page">
-        <div class="top-bar">
-          <div class="top-bar-left">
-            <button class="btn btn-icon btn-secondary" onclick="window.app.refresh()" title="Refresh">
-              🔄
-            </button>
+        <div class="section_content2">
+          <div class="top-bar">
+            <div class="top-bar-left">
+              <button class="btn btn-icon btn-secondary" onclick="window.app.refresh()" title="Refresh">
+                <img src="assets/icons/c11n_refresh_icon.png" alt="Refresh" class="refresh-icon" id="refresh-icon">
+              </button>
+            </div>
+            <div class="top-bar-right">
+              ${gcpButtonHtml}
+              <button class="universal-plus-btn" onclick="window.app.showUniversalMenu(event)" title="Add new">
+                <img src="assets/icons/c11n_plus_icon.png" alt="Add new" class="plus-icon" id="plus-icon">
+              </button>
+            </div>
           </div>
-          <div class="top-bar-right">
-            ${gcpButtonHtml}
-            <button class="universal-plus-btn" onclick="window.app.showUniversalMenu(event)" title="Add new">
-              +
-            </button>
-          </div>
+          <div id="server-tabs" class="server-tabs"></div>
         </div>
-        <div id="server-tabs" class="server-tabs"></div>
       </main>
     `;
 
@@ -301,7 +303,19 @@ class C11NApp {
       { label: 'Manage Service Profiles', action: 'window.app.showManageServiceProfilesModal' }
     ];
 
-    this.modal.showDropdown(menuItems, event.target);
+    // Get the plus icon and rotate it
+    const plusIcon = document.getElementById('plus-icon');
+    if (plusIcon) {
+      plusIcon.classList.add('rotated');
+    }
+
+    // Show dropdown and set up close handler
+    this.modal.showDropdown(menuItems, event.target, () => {
+      // This callback is called when the dropdown is closed
+      if (plusIcon) {
+        plusIcon.classList.remove('rotated');
+      }
+    });
   }
 
   // Service profile management
@@ -312,7 +326,20 @@ class C11NApp {
 
   // Refresh method
   async refresh() {
-    await this.realtimeManager.refresh();
+    // Add rotation animation to the refresh icon
+    const refreshIcon = document.getElementById('refresh-icon');
+    if (refreshIcon) {
+      refreshIcon.classList.add('rotating');
+    }
+
+    try {
+      await this.realtimeManager.refresh();
+    } finally {
+      // Remove rotation animation after refresh is complete
+      if (refreshIcon) {
+        refreshIcon.classList.remove('rotating');
+      }
+    }
   }
 
   // Server Tab Interactions
@@ -422,6 +449,39 @@ class C11NApp {
 
   // User management methods
   toggleUserMenu() {
+    // Check if user dropdown is currently open
+    const userDropdown = document.getElementById('user-dropdown');
+    const isUserDropdownOpen = userDropdown && !userDropdown.classList.contains('hidden');
+    
+    // If user dropdown is not open, close other dropdowns first
+    if (!isUserDropdownOpen) {
+      // Close universal dropdowns
+      const universalDropdowns = document.querySelectorAll('.universal-dropdown-menu');
+      universalDropdowns.forEach(dropdown => {
+        dropdown.classList.remove('expanding');
+        dropdown.classList.add('collapsing');
+        setTimeout(() => dropdown.remove(), 300);
+      });
+      
+      // Close GCP settings dropdowns and remove rotation
+      document.querySelectorAll('.gcp-dropdown-menu').forEach(menu => {
+        if (!menu.classList.contains('hidden')) {
+          menu.classList.add('hidden');
+          const settingsIcon = menu.closest('.gcp-dropdown')?.querySelector('.settings-icon');
+          if (settingsIcon) {
+            settingsIcon.classList.remove('rotated');
+          }
+        }
+      });
+      
+      // Remove rotation from plus icon if it's rotated
+      const plusIcon = document.getElementById('plus-icon');
+      if (plusIcon) {
+        plusIcon.classList.remove('rotated');
+      }
+    }
+    
+    // Now toggle the user menu
     this.userManager.toggleUserMenu();
   }
 
@@ -463,23 +523,109 @@ class C11NApp {
 
   toggleGCPMenu(event) {
     event.stopPropagation();
-    const dropdown = event.target.closest('.dropdown');
-    const menu = dropdown.querySelector('.dropdown-menu');
     
-    // Close other dropdowns first
-    document.querySelectorAll('.dropdown-menu').forEach(m => {
+    const dropdown = event.target.closest('.gcp-dropdown');
+    
+    // Check if dropdown exists
+    if (!dropdown) {
+      console.error('GCP dropdown container not found');
+      return;
+    }
+    
+    let menu = dropdown.querySelector('.gcp-dropdown-menu');
+    const settingsIcon = dropdown.querySelector('.settings-icon');
+    
+    // If menu doesn't exist, create it dynamically
+    if (!menu) {
+      console.log('Creating GCP dropdown menu dynamically');
+      const user = this.dataManager.getUser();
+      const isGCPConnected = this.dataManager.isGCPConnectedStatus();
+      
+      let menuHTML;
+      if (isGCPConnected) {
+        menuHTML = `
+          <div class="gcp-dropdown-menu hidden">
+            <div class="gcp-dropdown-item" onclick="window.app.showSelectGCPProjectModal()">
+              <i class="fas fa-exchange-alt"></i> Change Project
+            </div>
+            <div class="gcp-dropdown-item" onclick="window.app.disconnectGCP()">
+              <i class="fas fa-unlink"></i> Disconnect GCP
+            </div>
+          </div>
+        `;
+      } else {
+        menuHTML = `
+          <div class="gcp-dropdown-menu hidden">
+            <div class="gcp-dropdown-item" onclick="window.app.disconnectGCP()">
+              <i class="fas fa-unlink"></i> Disconnect GCP
+            </div>
+          </div>
+        `;
+      }
+      
+      dropdown.insertAdjacentHTML('beforeend', menuHTML);
+      menu = dropdown.querySelector('.gcp-dropdown-menu');
+    }
+    
+    // Check if this GCP dropdown is currently open
+    const isGCPDropdownOpen = !menu.classList.contains('hidden');
+    
+    // If this GCP dropdown is not open, close other dropdowns first
+    if (!isGCPDropdownOpen) {
+      // Close universal dropdowns
+      const universalDropdowns = document.querySelectorAll('.universal-dropdown-menu');
+      universalDropdowns.forEach(dropdown => {
+        dropdown.classList.remove('expanding');
+        dropdown.classList.add('collapsing');
+        setTimeout(() => dropdown.remove(), 300);
+      });
+      
+      // Close user dropdown
+      const userDropdown = document.getElementById('user-dropdown');
+      if (userDropdown && !userDropdown.classList.contains('hidden')) {
+        userDropdown.classList.add('hidden');
+      }
+      
+      // Remove rotation from plus icon if it's rotated
+      const plusIcon = document.getElementById('plus-icon');
+      if (plusIcon) {
+        plusIcon.classList.remove('rotated');
+      }
+    }
+    
+    // Close other GCP dropdowns
+    document.querySelectorAll('.gcp-dropdown-menu').forEach(m => {
       if (m !== menu && !m.classList.contains('hidden')) {
         m.classList.add('hidden');
+        // Remove rotation from other settings icons
+        const otherIcon = m.closest('.gcp-dropdown')?.querySelector('.settings-icon');
+        if (otherIcon) {
+          otherIcon.classList.remove('rotated');
+        }
       }
     });
     
     // Toggle this dropdown
     menu.classList.toggle('hidden');
     
+    // Toggle rotation animation
+    if (settingsIcon) {
+      if (menu.classList.contains('hidden')) {
+        settingsIcon.classList.remove('rotated');
+      } else {
+        settingsIcon.classList.add('rotated');
+      }
+    }
+    
     // Close dropdown when clicking outside
     const closeHandler = (e) => {
       if (!dropdown.contains(e.target)) {
-        menu.classList.add('hidden');
+        if (menu) {
+          menu.classList.add('hidden');
+        }
+        if (settingsIcon) {
+          settingsIcon.classList.remove('rotated');
+        }
         document.removeEventListener('click', closeHandler);
       }
     };

@@ -17,9 +17,11 @@ export class Navbar {
     console.log('📝 Rendering navbar HTML...');
     navbar.innerHTML = `
       <div class="navbar">
-        <a href="/" class="navbar-logo">C11N</a>
-        <div class="navbar-actions">
-          ${this.user ? this.renderUserSection() : ''}
+        <div class="section_content">
+          <a href="/" class="navbar-logo">C11N</a>
+          <div class="navbar-actions">
+            ${this.user ? this.renderUserSection() : ''}
+          </div>
         </div>
       </div>
     `;
@@ -69,6 +71,26 @@ export class Navbar {
         if (dropdown) {
           dropdown.classList.add('hidden');
         }
+      }
+      
+      // Also close any universal dropdowns when clicking outside
+      if (!e.target.closest('.universal-plus-btn') && !e.target.closest('.universal-dropdown-menu')) {
+        const universalDropdowns = document.querySelectorAll('.universal-dropdown-menu');
+        universalDropdowns.forEach(dropdown => {
+          if (dropdown.classList.contains('universal-dropdown-menu')) {
+            dropdown.classList.remove('expanding');
+            dropdown.classList.add('collapsing');
+            setTimeout(() => dropdown.remove(), 300);
+          } else {
+            dropdown.remove();
+          }
+        });
+      }
+      
+      // Close GCP dropdowns when clicking outside
+      if (!e.target.closest('.gcp-settings-btn') && !e.target.closest('.gcp-dropdown-menu')) {
+        const gcpDropdowns = document.querySelectorAll('.gcp-dropdown-menu');
+        gcpDropdowns.forEach(dropdown => dropdown.remove());
       }
     };
     document.addEventListener('click', this.outsideClickHandler);
