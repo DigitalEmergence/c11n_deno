@@ -15,8 +15,7 @@ export async function authMiddleware(ctx: Context, next: Next) {
   const publicAuthEndpoints = [
     "/api/auth/github/config",
     "/api/auth/github/callback",
-    "/api/auth/logout",
-    "/api/auth/me"
+    "/api/auth/logout"
   ];
   
   if (publicAuthEndpoints.includes(ctx.request.url.pathname)) {

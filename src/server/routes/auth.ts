@@ -166,6 +166,7 @@ authRoutes.get("/api/auth/me", async (ctx) => {
   const authHeader = ctx.request.headers.get("Authorization");
   if (!authHeader?.startsWith("Bearer ")) {
     ctx.response.status = 401;
+    ctx.response.body = { error: "No authorization header" };
     return;
   }
 
@@ -180,12 +181,19 @@ authRoutes.get("/api/auth/me", async (ctx) => {
 
     if (users.length === 0) {
       ctx.response.status = 401;
+      ctx.response.body = { error: "User not found" };
       return;
     }
 
-    ctx.response.body = { user: users[0].u.properties };
-  } catch {
+    // Return both user and token (for token refresh scenarios)
+    ctx.response.body = { 
+      user: users[0].u.properties,
+      token: jwt // Return the same token since it's still valid
+    };
+  } catch (error) {
+    console.error("Auth me error:", error);
     ctx.response.status = 401;
+    ctx.response.body = { error: "Invalid token" };
   }
 });
 

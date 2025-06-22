@@ -4,14 +4,14 @@ import { encrypt, decrypt } from "../services/encryption.ts";
 
 export const gcpRoutes = new Router();
 
-// Full cloud-platform scope (works for test users)
+// Complete GCP OAuth scope - includes all functionality
 const GCP_OAUTH_SCOPES = [
-  'https://www.googleapis.com/auth/cloud-platform'  // Full GCP access
+  'https://www.googleapis.com/auth/cloud-platform'             // Complete cloud platform access (deployment, monitoring, logging, IAM)
 ];
 
 // Initiate GCP OAuth - user clicks "Connect GCP Account"
 gcpRoutes.post("/api/auth/gcp", async (ctx) => {
-  console.log("🔐 Initiating GCP OAuth flow with full access...");
+  console.log("🔐 Initiating GCP OAuth flow with complete cloud platform access...");
   
   const gcpAuthUrl = 
     `https://accounts.google.com/o/oauth2/auth?` +
@@ -23,7 +23,7 @@ gcpRoutes.post("/api/auth/gcp", async (ctx) => {
     `prompt=consent&` +
     `include_granted_scopes=true`;
 
-  console.log("📋 Requesting full cloud-platform scope");
+  console.log("📋 Requesting cloud platform scope:", GCP_OAUTH_SCOPES.join(', '));
   ctx.response.body = { authUrl: gcpAuthUrl };
 });
 
@@ -72,7 +72,7 @@ gcpRoutes.post("/api/auth/gcp/callback", async (ctx) => {
     // Verify we have the required scopes
     const grantedScopes = scope ? scope.split(' ') : [];
     const missingScopes = GCP_OAUTH_SCOPES.filter(requiredScope => 
-      !grantedScopes.some(grantedScope => grantedScope.includes(requiredScope.split('/').pop()))
+      !grantedScopes.some((grantedScope: string) => grantedScope.includes(requiredScope.split('/').pop() || ''))
     );
 
     if (missingScopes.length > 0) {
@@ -113,7 +113,7 @@ gcpRoutes.post("/api/auth/gcp/callback", async (ctx) => {
     ctx.response.status = 500;
     ctx.response.body = { 
       error: "Failed to connect GCP account",
-      details: error.message 
+      details: (error as Error).message 
     };
   }
 });
@@ -182,7 +182,7 @@ gcpRoutes.get("/api/gcp/projects", async (ctx) => {
     ctx.response.status = 500;
     ctx.response.body = { 
       error: "Failed to fetch GCP projects",
-      details: error.message 
+      details: (error as Error).message 
     };
   }
 });
@@ -362,6 +362,178 @@ gcpRoutes.post("/api/gcp/test-connection", async (ctx) => {
     ctx.response.status = 500;
     ctx.response.body = { 
       error: "Connection test failed",
+      details: (error as Error).message 
+    };
+  }
+});
+
+
+// Get service metrics
+gcpRoutes.get("/api/gcp/metrics/:serviceName", async (ctx) => {
+  const userId = ctx.state.userId;
+  const serviceName = ctx.params.serviceName;
+
+  try {
+    console.log(`📊 Fetching metrics for service: ${serviceName}, user: ${userId}`);
+    
+    const users = await db.run(
+      "MATCH (u:User {github_id: $userId}) RETURN u",
+      { userId }
+    );
+
+    if (!users[0]?.u.properties.gcp_access_token) {
+      ctx.response.status = 400;
+      ctx.response.body = { error: "GCP not connected" };
+      return;
+    }
+
+    const user = users[0].u.properties;
+
+    if (!user.gcp_project_id) {
+      ctx.response.status = 400;
+      ctx.response.body = { error: "No GCP project selected" };
+      return;
+    }
+
+    const accessToken = await getValidAccessToken(user);
+    
+    // Import GCP service
+    const { gcp } = await import("../services/gcp.ts");
+    
+    const metrics = await gcp.getServiceMetrics(
+      user.gcp_project_id,
+      serviceName,
+      accessToken
+    );
+
+    ctx.response.body = { metrics };
+  } catch (error) {
+    console.error("❌ Failed to fetch service metrics:", error);
+    ctx.response.status = 500;
+    ctx.response.body = { 
+      error: "Failed to fetch metrics",
+      details: (error as Error).message 
+    };
+  }
+});
+
+// Get service logs
+gcpRoutes.get("/api/gcp/logs/:serviceName", async (ctx) => {
+  const userId = ctx.state.userId;
+  const serviceName = ctx.params.serviceName;
+
+  try {
+    console.log(`📋 Fetching logs for service: ${serviceName}, user: ${userId}`);
+    
+    const users = await db.run(
+      "MATCH (u:User {github_id: $userId}) RETURN u",
+      { userId }
+    );
+
+    if (!users[0]?.u.properties.gcp_access_token) {
+      ctx.response.status = 400;
+      ctx.response.body = { error: "GCP not connected" };
+      return;
+    }
+
+    const user = users[0].u.properties;
+
+    if (!user.gcp_project_id) {
+      ctx.response.status = 400;
+      ctx.response.body = { error: "No GCP project selected" };
+      return;
+    }
+
+    const accessToken = await getValidAccessToken(user);
+    
+    // Import GCP service
+    const { gcp } = await import("../services/gcp.ts");
+    
+    const logs = await gcp.getServiceLogs(
+      user.gcp_project_id,
+      serviceName,
+      accessToken
+    );
+
+    ctx.response.body = { logs };
+  } catch (error) {
+    console.error("❌ Failed to fetch service logs:", error);
+    ctx.response.status = 500;
+    ctx.response.body = { 
+      error: "Failed to fetch logs",
+      details: (error as Error).message 
+    };
+  }
+});
+
+// Validate GCP token - check if current token is valid
+gcpRoutes.get("/api/gcp/validate-token", async (ctx) => {
+  const userId = ctx.state.userId;
+
+  try {
+    console.log(`🔍 Validating GCP token for user: ${userId}`);
+    
+    const users = await db.run(
+      "MATCH (u:User {github_id: $userId}) RETURN u",
+      { userId }
+    );
+
+    if (!users[0]?.u.properties.gcp_access_token) {
+      ctx.response.body = { 
+        valid: false, 
+        reason: "not_connected",
+        message: "GCP not connected" 
+      };
+      return;
+    }
+
+    const user = users[0].u.properties;
+    
+    try {
+      const accessToken = await getValidAccessToken(user);
+      
+      // Test token with a lightweight API call
+      const testResponse = await fetch(
+        "https://www.googleapis.com/oauth2/v1/tokeninfo",
+        {
+          headers: { 
+            Authorization: `Bearer ${accessToken}`,
+            'User-Agent': 'C11N/1.0'
+          },
+        }
+      );
+
+      if (testResponse.ok) {
+        console.log("✅ GCP token is valid");
+        ctx.response.body = { 
+          valid: true,
+          message: "Token is valid"
+        };
+      } else {
+        console.log("❌ GCP token is invalid:", testResponse.status);
+        ctx.response.body = { 
+          valid: false,
+          reason: "invalid_token",
+          message: "Token is invalid or expired",
+          status: testResponse.status
+        };
+      }
+    } catch (tokenError) {
+      console.log("❌ Token validation failed:", tokenError);
+      ctx.response.body = { 
+        valid: false,
+        reason: "token_error",
+        message: "Failed to validate token - reconnection required",
+        details: (tokenError as Error).message
+      };
+    }
+  } catch (error) {
+    console.error("❌ Token validation error:", error);
+    ctx.response.status = 500;
+    ctx.response.body = { 
+      valid: false,
+      reason: "validation_error",
+      message: "Failed to validate token",
       details: (error as Error).message 
     };
   }

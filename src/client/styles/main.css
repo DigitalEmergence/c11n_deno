@@ -244,6 +244,16 @@ body {
   background: #28a745;
 }
 
+.btn-warning {
+  background: var(--color-warning);
+  color: white;
+}
+
+.btn-warning:hover {
+  background: #e6850e;
+  transform: translateY(-1px);
+}
+
 .btn-icon {
   padding: var(--spacing-2);
   width: 36px;

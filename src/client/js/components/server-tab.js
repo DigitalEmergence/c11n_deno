@@ -93,6 +93,7 @@ export class ServerTabs {
             </div>
             <div class="server-tab-description">
               ${deployment.config ? `${deployment.config.project_name} - ${deployment.config.project_app_config}` : 'No application loaded'}
+              ${deployment.gcp_project_name ? `<br><small class="gcp-project-info">📍 GCP Project: ${deployment.gcp_project_name}</small>` : ''}
             </div>
           </div>
           <div class="server-status-icon ${statusClass}">${statusIcon}</div>
@@ -194,6 +195,18 @@ export class ServerTabs {
                 </span>
               </div>
             ` : ''}
+            ${isDeployment && server.gcp_project_name ? `
+              <div class="config-row">
+                <span class="config-label">GCP Project:</span>
+                <span class="config-value">${server.gcp_project_name}</span>
+              </div>
+            ` : ''}
+            ${isDeployment && server.region ? `
+              <div class="config-row">
+                <span class="config-label">Region:</span>
+                <span class="config-value">${server.region}</span>
+              </div>
+            ` : ''}
           </div>
           <div class="config-actions">
             <button class="btn btn-secondary mt-4" onclick="window.app.changeConfig('${server.id}')">
@@ -266,9 +279,7 @@ export class ServerTabs {
         </div>
         
         <div id="package-list-${server.id}" class="package-list">
-          <div class="package-loading">
-            <p>Loading package status from app config...</p>
-          </div>
+          <div class="package-empty">No packages found</div>
         </div>
         
         <div id="application-footer-${server.id}" class="application-footer" style="display: none;">

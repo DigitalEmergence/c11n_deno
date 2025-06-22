@@ -81,6 +81,24 @@ configRoutes.post("/api/configs", async (ctx) => {
       throw new ValidationError("App config is required", "project_app_config");
     }
 
+    // Validate custom variables if provided
+    const customVariables: Record<string, string> = {};
+    if (body.custom_variables && typeof body.custom_variables === 'object') {
+      for (const [key, varData] of Object.entries(body.custom_variables)) {
+        if (varData && typeof varData === 'object' && 'value' in varData) {
+          const variable = varData as { value: string; secure?: boolean };
+          
+          // Validate variable name format - allow letters, numbers, underscores
+          if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(key)) {
+            throw new ValidationError(`Invalid variable name: ${key}. Must start with a letter or underscore, and contain only letters, numbers, and underscores.`, "custom_variables");
+          }
+          
+          // Store variable value, encrypt if marked as secure
+          customVariables[key] = variable.secure ? encrypt(variable.value) : variable.value;
+        }
+      }
+    }
+
     let project_namespace: string;
     let project_auth_token: string;
     let workspaceId: string | null = null;
@@ -358,6 +376,126 @@ configRoutes.get("/api/configs/github/references", async (ctx) => {
     const [branches, tags] = await Promise.all([
       github.getRepoBranches(namespace, `.${project}`, token),
       github.getRepoTags(namespace, `.${project}`, token)
+    ]);
+
+    ctx.response.body = { 
+      branches: branches.map((b: any) => b.name),
+      tags: tags.map((t: any) => t.name)
+    };
+  } catch (error) {
+    ctx.response.status = 500;
+    ctx.response.body = { error: "Failed to fetch repository references" };
+  }
+});
+
+// Get GitHub projects for workspace
+configRoutes.get("/api/configs/workspace/:workspaceId/projects", async (ctx) => {
+  const userId = ctx.state.userId;
+  const workspaceId = ctx.params.workspaceId;
+
+  try {
+    // Get workspace and verify ownership
+    const workspaces = await db.run(`
+      MATCH (u:User {github_id: $userId})-[:OWNS]->(w:Workspace {id: $workspaceId})
+      RETURN w
+    `, { userId, workspaceId });
+
+    if (workspaces.length === 0) {
+      ctx.response.status = 404;
+      ctx.response.body = { error: "Workspace not found" };
+      return;
+    }
+
+    const workspace = workspaces[0].w.properties;
+    const decryptedToken = decrypt(workspace.project_auth_token);
+    
+    const repos = await github.getUserRepos(decryptedToken);
+    const projectRepos = repos.filter((repo: any) => 
+      repo.name.startsWith('.') && repo.owner.login === workspace.project_namespace
+    );
+
+    ctx.response.body = { projects: projectRepos };
+  } catch (error) {
+    ctx.response.status = 500;
+    ctx.response.body = { error: "Failed to fetch workspace projects" };
+  }
+});
+
+// Get app configs for workspace project
+configRoutes.get("/api/configs/workspace/:workspaceId/app-configs", async (ctx) => {
+  const userId = ctx.state.userId;
+  const workspaceId = ctx.params.workspaceId;
+  const project = ctx.request.url.searchParams.get("project");
+
+  if (!project) {
+    ctx.response.status = 400;
+    ctx.response.body = { error: "Project is required" };
+    return;
+  }
+
+  try {
+    // Get workspace and verify ownership
+    const workspaces = await db.run(`
+      MATCH (u:User {github_id: $userId})-[:OWNS]->(w:Workspace {id: $workspaceId})
+      RETURN w
+    `, { userId, workspaceId });
+
+    if (workspaces.length === 0) {
+      ctx.response.status = 404;
+      ctx.response.body = { error: "Workspace not found" };
+      return;
+    }
+
+    const workspace = workspaces[0].w.properties;
+    const decryptedToken = decrypt(workspace.project_auth_token);
+    
+    console.log(`Fetching app configs for workspace ${workspaceId}, project: ${project}`);
+    // Don't add extra period if project already starts with one
+    const repoName = project.startsWith('.') ? project : `.${project}`;
+    const appConfigs = await github.scanAppConfigs(workspace.project_namespace, repoName, decryptedToken);
+    
+    // Always return success with the configs (even if empty)
+    ctx.response.body = { appConfigs };
+  } catch (error) {
+    console.error("Error fetching workspace app configs:", error);
+    ctx.response.status = 500;
+    ctx.response.body = { error: "Failed to fetch app configs: " + (error as Error).message };
+  }
+});
+
+// Get repository references for workspace project
+configRoutes.get("/api/configs/workspace/:workspaceId/references", async (ctx) => {
+  const userId = ctx.state.userId;
+  const workspaceId = ctx.params.workspaceId;
+  const project = ctx.request.url.searchParams.get("project");
+
+  if (!project) {
+    ctx.response.status = 400;
+    ctx.response.body = { error: "Project is required" };
+    return;
+  }
+
+  try {
+    // Get workspace and verify ownership
+    const workspaces = await db.run(`
+      MATCH (u:User {github_id: $userId})-[:OWNS]->(w:Workspace {id: $workspaceId})
+      RETURN w
+    `, { userId, workspaceId });
+
+    if (workspaces.length === 0) {
+      ctx.response.status = 404;
+      ctx.response.body = { error: "Workspace not found" };
+      return;
+    }
+
+    const workspace = workspaces[0].w.properties;
+    const decryptedToken = decrypt(workspace.project_auth_token);
+    
+    // Don't add extra period if project already starts with one
+    const repoName = project.startsWith('.') ? project : `.${project}`;
+    const [branches, tags] = await Promise.all([
+      github.getRepoBranches(workspace.project_namespace, repoName, decryptedToken),
+      github.getRepoTags(workspace.project_namespace, repoName, decryptedToken)
     ]);
 
     ctx.response.body = { 

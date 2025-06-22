@@ -53,31 +53,49 @@ localServerRoutes.post("/api/local-servers", async (ctx) => {
 
     // Check if local server is actually running
     try {
+      console.log(`🔍 Checking if JSphere server is running on port ${port}...`);
       const healthCheck = await fetch(`http://localhost:${port}/health`, {
         method: 'GET',
         signal: AbortSignal.timeout(5000), // 5 second timeout
       });
       
+      console.log(`📡 Health check response for port ${port}: ${healthCheck.status} ${healthCheck.statusText}`);
+      
       if (!healthCheck.ok) {
+        console.warn(`⚠️ Health check failed for port ${port}: ${healthCheck.status}`);
         throw new Error("Health check failed");
       }
+      
+      // Try to parse as JSON, but handle HTML responses gracefully
+      const contentType = healthCheck.headers.get('content-type') || '';
+      if (contentType.includes('application/json')) {
+        const healthData = await healthCheck.json();
+        console.log(`✅ JSphere server on port ${port} is healthy:`, healthData);
+      } else {
+        const responseText = await healthCheck.text();
+        console.warn(`⚠️ Port ${port} returned non-JSON response (${contentType}):`, responseText.substring(0, 100));
+        throw new Error("Port is not running JSphere (returned HTML instead of JSON)");
+      }
     } catch (error) {
+      console.error(`❌ Cannot connect to JSphere server on port ${port}:`, error.message);
       ctx.response.status = 400;
       ctx.response.body = { 
-        error: `Cannot connect to local server on port ${port}. Make sure JSphere is running.` 
+        error: `Cannot connect to JSphere server on port ${port}. ${error.message.includes('JSON') ? 'Port appears to be running a web server instead of JSphere.' : 'Make sure JSphere is running.'}` 
       };
       return;
     }
 
     const serverId = crypto.randomUUID();
+    console.log(`🆔 Generated server ID: ${serverId} for port ${port}`);
 
     // Create local server record
-    await db.run(`
+    console.log(`💾 Creating local server record in database...`);
+    const result = await db.run(`
       MATCH (u:User {github_id: $userId})
       CREATE (s:LocalServer {
         id: $serverId,
         port: $port,
-        status: "idle",
+        status: "connecting",
         last_ping: datetime(),
         created_at: datetime()
       })
@@ -89,16 +107,83 @@ localServerRoutes.post("/api/local-servers", async (ctx) => {
       port: port.toString(),
     });
 
+    const server = result[0].s.properties;
+    console.log(`✅ Local server record created:`, server);
+
+    // Perform initial health check
+    let healthStatus = "idle";
+    try {
+      console.log(`🔍 Performing secondary health check for server ${serverId}...`);
+      const healthCheck = await fetch(`http://localhost:${port}/health`, {
+        method: 'GET',
+        signal: AbortSignal.timeout(3000), // 3 second timeout for initial check
+      });
+      
+      console.log(`📡 Secondary health check response: ${healthCheck.status} ${healthCheck.statusText}`);
+      healthStatus = healthCheck.ok ? "idle" : "error";
+      
+      if (healthCheck.ok) {
+        const healthData = await healthCheck.json();
+        console.log(`✅ Secondary health check data:`, healthData);
+      }
+    } catch (error) {
+      healthStatus = "error";
+      console.error(`❌ Secondary health check failed for server ${serverId}:`, error.message);
+    }
+
+    // Update server status based on health check
+    console.log(`📝 Updating server status to: ${healthStatus}`);
+    await db.run(`
+      MATCH (s:LocalServer {id: $serverId})
+      SET s.status = $status, s.last_ping = datetime()
+      RETURN s
+    `, { serverId, status: healthStatus });
+
     // Send config if provided
+    let config = null;
     if (body.configId) {
       try {
+        console.log(`📋 Loading config ${body.configId} to server ${serverId}...`);
         await loadConfigToLocalServer(userId, serverId, body.configId);
+        
+        // Get the config details for response
+        const configResult = await db.run(`
+          MATCH (c:JSphereConfig {id: $configId})
+          RETURN c
+        `, { configId: body.configId });
+        
+        if (configResult.length > 0) {
+          config = configResult[0].c.properties;
+          // Remove sensitive data
+          delete config.project_auth_token;
+          delete config.project_preview_server_auth_token;
+          console.log(`✅ Config loaded and retrieved for response:`, { name: config.name, project_name: config.project_name });
+        }
       } catch (error) {
-        console.error("Failed to load config to local server:", error);
+        console.error(`❌ Failed to load config to local server ${serverId}:`, error.message);
       }
     }
 
-    ctx.response.body = { success: true, serverId };
+    // Return complete server object
+    const localServer = {
+      ...server,
+      status: healthStatus,
+      url: `http://localhost:${port}`,
+      config: config
+    };
+
+    console.log(`📤 Sending response for server ${serverId}:`, {
+      id: localServer.id,
+      port: localServer.port,
+      status: localServer.status,
+      url: localServer.url,
+      hasConfig: !!localServer.config
+    });
+
+    ctx.response.body = { 
+      success: true, 
+      localServer: localServer
+    };
   } catch (error) {
     if (error instanceof ValidationError) {
       ctx.response.status = 400;
@@ -318,6 +403,13 @@ async function loadConfigToLocalServer(userId: string, serverId: string, configI
     }
   };
 
+  console.log(`📤 Sending config to JSphere server on port ${server.port}:`, {
+    configName: config.name,
+    projectName: config.project_name,
+    appConfig: config.project_app_config,
+    httpPort: config.server_http_port
+  });
+
   const response = await fetch(`http://localhost:${server.port}/@cmd/loadconfig`, {
     method: 'POST',
     headers: {
@@ -326,9 +418,16 @@ async function loadConfigToLocalServer(userId: string, serverId: string, configI
     body: JSON.stringify(jsphereConfig)
   });
 
+  console.log(`📡 JSphere config load response: ${response.status} ${response.statusText}`);
+
   if (!response.ok) {
+    const errorText = await response.text();
+    console.error(`❌ Failed to load config to JSphere server: ${response.status} - ${errorText}`);
     throw new Error("Failed to load config to local server");
   }
+
+  const responseData = await response.json();
+  console.log(`✅ Config loaded successfully to JSphere server:`, responseData);
 
   // Update server status
   await db.run(`

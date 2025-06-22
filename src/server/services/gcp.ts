@@ -64,6 +64,11 @@ export class GCPService {
   }
 
   async request(url: string, token: string, options: RequestInit = {}) {
+    // Validate token before making request
+    if (!token || token.trim() === '') {
+      throw new Error('GCP API error: No access token provided');
+    }
+
     const response = await fetch(url, {
       ...options,
       headers: {
@@ -77,10 +82,133 @@ export class GCPService {
     if (!response.ok) {
       const error = await response.text();
       console.error(`GCP API error: ${response.status} ${response.statusText} - ${error}`);
+      
+      // Enhanced error handling for different types of authentication failures
+      if (response.status === 401) {
+        const errorDetails = this.parseAuthError(error);
+        throw new Error(`GCP Authentication Error: ${errorDetails.message}. ${errorDetails.suggestion}`);
+      } else if (response.status === 403) {
+        throw new Error(`GCP Permission Error: Insufficient permissions. Please ensure your GCP account has the required roles for Cloud Run operations.`);
+      } else if (response.status === 404) {
+        throw new Error(`GCP Resource Error: The requested resource was not found. Please verify your project ID and region settings.`);
+      }
+      
       throw new Error(`GCP API error: ${response.statusText} - ${error}`);
     }
 
     return response.json();
+  }
+
+  // Parse authentication error details and provide helpful suggestions
+  private parseAuthError(errorText: string): { message: string; suggestion: string } {
+    try {
+      const errorObj = JSON.parse(errorText);
+      const errorCode = errorObj.error?.code;
+      const errorMessage = errorObj.error?.message || 'Unknown authentication error';
+      const errorReason = errorObj.error?.details?.[0]?.reason;
+
+      if (errorReason === 'ACCESS_TOKEN_TYPE_UNSUPPORTED') {
+        return {
+          message: 'Invalid or expired access token',
+          suggestion: 'Please reconnect your GCP account to refresh your authentication credentials.'
+        };
+      } else if (errorMessage.includes('invalid authentication credentials')) {
+        return {
+          message: 'Authentication credentials are invalid or expired',
+          suggestion: 'Your GCP session may have expired. Please disconnect and reconnect your GCP account.'
+        };
+      } else if (errorMessage.includes('token')) {
+        return {
+          message: 'Token-related authentication failure',
+          suggestion: 'Please try refreshing your GCP connection or reconnecting your account.'
+        };
+      }
+
+      return {
+        message: errorMessage,
+        suggestion: 'Please check your GCP account connection and try again.'
+      };
+    } catch {
+      return {
+        message: 'Authentication failed',
+        suggestion: 'Please reconnect your GCP account and ensure you have the necessary permissions.'
+      };
+    }
+  }
+
+  // Validate token format and basic structure
+  validateToken(token: string): { valid: boolean; error?: string } {
+    if (!token || typeof token !== 'string') {
+      return { valid: false, error: 'Token is missing or invalid type' };
+    }
+
+    if (token.trim() === '') {
+      return { valid: false, error: 'Token is empty' };
+    }
+
+    // Basic JWT structure check (should have 3 parts separated by dots)
+    const parts = token.split('.');
+    if (parts.length !== 3) {
+      return { valid: false, error: 'Token does not have valid JWT structure' };
+    }
+
+    // Check if token looks like a valid base64 encoded string
+    try {
+      atob(parts[0]);
+      atob(parts[1]);
+    } catch {
+      return { valid: false, error: 'Token appears to be corrupted or invalid' };
+    }
+
+    return { valid: true };
+  }
+
+  // Test token validity by making a lightweight API call
+  async testTokenValidity(token: string): Promise<{ valid: boolean; error?: string; scopes?: string[] }> {
+    try {
+      const validation = this.validateToken(token);
+      if (!validation.valid) {
+        return { valid: false, error: validation.error };
+      }
+
+      // Use Google's tokeninfo endpoint to validate the token
+      const response = await fetch(`https://www.googleapis.com/oauth2/v1/tokeninfo?access_token=${encodeURIComponent(token)}`, {
+        method: 'GET',
+        headers: {
+          'User-Agent': 'C11N/1.0'
+        }
+      });
+
+      if (!response.ok) {
+        if (response.status === 400) {
+          return { valid: false, error: 'Token is invalid or expired' };
+        }
+        return { valid: false, error: `Token validation failed: ${response.statusText}` };
+      }
+
+      const tokenInfo = await response.json();
+      
+      // Check if token has required scopes
+      const scopes = tokenInfo.scope ? tokenInfo.scope.split(' ') : [];
+      const hasCloudPlatformScope = scopes.some((scope: string) => 
+        scope.includes('cloud-platform') || scope.includes('run')
+      );
+
+      if (!hasCloudPlatformScope) {
+        return { 
+          valid: false, 
+          error: 'Token does not have required Cloud Platform permissions',
+          scopes 
+        };
+      }
+
+      return { valid: true, scopes };
+    } catch (error) {
+      return { 
+        valid: false, 
+        error: `Token validation error: ${(error as Error).message}` 
+      };
+    }
   }
 
   // Project Management
@@ -289,13 +417,23 @@ export class GCPService {
     try {
       console.log(`📈 Fetching metric: ${metricType} for service: ${serviceName}`);
       
-      // Build the filter with proper escaping - use resource.label (singular) for GCP Monitoring API
-      let filter = `metric.type="${metricType}" AND resource.type="cloud_run_revision" AND resource.label.service_name="${serviceName}"`;
-      if (region) {
-        filter += ` AND resource.label.location="${region}"`;
+      // Validate inputs
+      if (!serviceName || serviceName.trim() === '') {
+        throw new Error('Service name is required for metrics fetching');
       }
       
-      // Use metric-specific aggregation settings
+      if (!projectId || projectId.trim() === '') {
+        throw new Error('Project ID is required for metrics fetching');
+      }
+      
+      // Build the filter with proper escaping - use resource.labels (plural) for GCP Monitoring API
+      // Include both cloud_run_revision and cloud_run_service resource types for comprehensive coverage
+      let filter = `metric.type="${metricType}" AND (resource.type="cloud_run_revision" OR resource.type="cloud_run_service") AND resource.labels.service_name="${serviceName}"`;
+      if (region && region.trim() !== '') {
+        filter += ` AND resource.labels.location="${region}"`;
+      }
+      
+      // Use metric-specific aggregation settings optimized for Cloud Run
       const aggregationSettings = this.getAggregationSettings(metricType);
       
       // Use shorter time range to ensure data availability
@@ -331,6 +469,16 @@ export class GCPService {
         if (firstSeries.points && firstSeries.points.length > 0) {
           console.log(`📊 Sample data points:`, firstSeries.points.slice(0, 3));
         }
+        
+        // Log resource labels for debugging
+        if (firstSeries.resource?.labels) {
+          console.log(`🏷️ Resource labels found:`, firstSeries.resource.labels);
+        }
+      } else {
+        console.log(`⚠️ No time series data found for ${metricType}. This could mean:`);
+        console.log(`   - Service "${serviceName}" has no activity in the time range`);
+        console.log(`   - Service name or region doesn't match exactly`);
+        console.log(`   - Monitoring data hasn't been generated yet`);
       }
       
       console.log(`✅ Metric ${metricType} fetched successfully`);
@@ -356,26 +504,32 @@ export class GCPService {
     }
   }
 
-  // Get appropriate aggregation settings for different metric types
+  // Get appropriate aggregation settings for different metric types - optimized for Cloud Run 2024-2025
   private getAggregationSettings(metricType: string): { aligner: string, reducer: string } {
     switch (metricType) {
       case 'run.googleapis.com/request_count':
+        // For request count, use ALIGN_RATE to get requests per second, then sum across instances
         return { aligner: 'ALIGN_RATE', reducer: 'REDUCE_SUM' };
       
       case 'run.googleapis.com/request_latencies':
+        // For latencies, use ALIGN_DELTA for distribution metrics, then get mean across instances
         return { aligner: 'ALIGN_DELTA', reducer: 'REDUCE_MEAN' };
       
       case 'run.googleapis.com/container/cpu/utilizations':
       case 'run.googleapis.com/container/memory/utilizations':
+        // For utilization metrics, use ALIGN_MEAN to get average utilization over time period
         return { aligner: 'ALIGN_MEAN', reducer: 'REDUCE_MEAN' };
       
       case 'run.googleapis.com/container/instance_count':
+        // For instance count, use ALIGN_MEAN to get average instances over time period
         return { aligner: 'ALIGN_MEAN', reducer: 'REDUCE_MEAN' };
       
       case 'run.googleapis.com/container/billable_instance_time':
+        // For billable time, use ALIGN_RATE to get time per second, then sum across instances
         return { aligner: 'ALIGN_RATE', reducer: 'REDUCE_SUM' };
       
       default:
+        // Default to mean alignment and reduction for unknown metrics
         return { aligner: 'ALIGN_MEAN', reducer: 'REDUCE_MEAN' };
     }
   }
@@ -396,7 +550,7 @@ export class GCPService {
       const values = timeSeries.points.map((point: any) => {
         const value = parseFloat(point.value?.doubleValue || point.value?.int64Value || 0);
         return isNaN(value) ? 0 : value;
-      }).filter(v => v !== null && v !== undefined);
+      }).filter((v: number) => v !== null && v !== undefined);
 
       if (values.length === 0) {
         console.log(`📊 No valid values found, returning 0`);

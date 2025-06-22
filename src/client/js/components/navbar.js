@@ -1,7 +1,8 @@
 export class Navbar {
+  // Static flag to track if global event listeners are attached
+  static globalEventListenersAttached = false;
   constructor(user) {
     this.user = user;
-    this.eventListenersAttached = false;
     this.render();
   }
 
@@ -41,31 +42,32 @@ export class Navbar {
   }
 
   attachEvents() {
-    // Only attach events once to prevent duplicates
-    if (this.eventListenersAttached) {
+    // Only attach global events once across all navbar instances
+    if (Navbar.globalEventListenersAttached) {
       return;
     }
 
     console.log('Attaching navbar event listeners...');
 
     // Close dropdown when clicking outside
-    document.addEventListener('click', (e) => {
+    this.outsideClickHandler = (e) => {
       if (!e.target.closest('.user-profile-dropdown')) {
         const dropdown = document.getElementById('user-dropdown');
         if (dropdown) {
           dropdown.classList.add('hidden');
         }
       }
-    });
+    };
+    document.addEventListener('click', this.outsideClickHandler);
 
     // Handle dropdown item clicks with more specific targeting
-    document.addEventListener('click', (e) => {
-      console.log('Document click detected:', e.target);
-      
-      // Check if the clicked element is a dropdown item
+    this.dropdownClickHandler = (e) => {
+      // Only log for dropdown items to reduce noise
       if (e.target.classList.contains('dropdown-item') && e.target.hasAttribute('data-action')) {
+        console.log('Dropdown item clicked:', e.target);
+        
         const action = e.target.getAttribute('data-action');
-        console.log('Dropdown item clicked with action:', action);
+        console.log('Dropdown action:', action);
         
         // Prevent event bubbling
         e.preventDefault();
@@ -76,10 +78,20 @@ export class Navbar {
           this.handleDropdownAction(action);
         }, 10);
       }
-    });
+    };
+    document.addEventListener('click', this.dropdownClickHandler);
 
-    this.eventListenersAttached = true;
+    Navbar.globalEventListenersAttached = true;
     console.log('Navbar event listeners attached successfully');
+  }
+
+  // Static method to clean up global event listeners if needed
+  static cleanup() {
+    if (Navbar.globalEventListenersAttached) {
+      // Note: We can't easily remove the specific handlers without storing references
+      // This is a limitation of the current approach, but the flag prevents duplicates
+      Navbar.globalEventListenersAttached = false;
+    }
   }
 
   handleDropdownAction(action) {

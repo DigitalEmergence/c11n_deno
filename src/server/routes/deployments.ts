@@ -109,7 +109,7 @@ deploymentRoutes.get("/api/deployments", async (ctx) => {
       ORDER BY d.created_at DESC
     `, { userId });
 
-    const deploymentList = deployments.map(record => {
+    const deploymentList = deployments.map((record: any) => {
       const deployment = record.d.properties;
       const profile = record.p?.properties;
       const config = record.c?.properties;
@@ -144,6 +144,9 @@ deploymentRoutes.post("/api/deployments", async (ctx) => {
     if (!validateRequired(body.serviceProfileId)) {
       throw new ValidationError("Service profile is required", "serviceProfileId");
     }
+    if (!validateRequired(body.projectId)) {
+      throw new ValidationError("GCP project is required", "projectId");
+    }
 
     // Get user's info and check deployment limits
     const users = await db.run(`
@@ -152,10 +155,49 @@ deploymentRoutes.post("/api/deployments", async (ctx) => {
     `, { userId });
 
     const user = users[0]?.u.properties;
-    if (!user?.gcp_access_token || !user?.gcp_project_id) {
+    if (!user?.gcp_access_token) {
       ctx.response.status = 400;
       ctx.response.body = { error: "GCP account not connected" };
       return;
+    }
+
+    // Validate that the user has access to the specified project and get project name
+    let projectName = body.projectId; // Default fallback
+    try {
+      const accessToken = decrypt(user.gcp_access_token);
+      const response = await fetch(
+        `https://cloudresourcemanager.googleapis.com/v1/projects/${body.projectId}`,
+        {
+          headers: { 
+            Authorization: `Bearer ${accessToken}`,
+            'User-Agent': 'C11N/1.0'
+          },
+        }
+      );
+
+      if (!response.ok) {
+        if (response.status === 403) {
+          throw new ValidationError("Access denied to the specified GCP project", "projectId");
+        } else if (response.status === 404) {
+          throw new ValidationError("GCP project not found", "projectId");
+        } else {
+          throw new Error(`Failed to validate project access: ${response.statusText}`);
+        }
+      }
+
+      const projectData = await response.json();
+      if (projectData.lifecycleState !== 'ACTIVE') {
+        throw new ValidationError("GCP project is not active", "projectId");
+      }
+
+      // Store the project name for display purposes
+      projectName = projectData.name || body.projectId;
+    } catch (error) {
+      if (error instanceof ValidationError) {
+        throw error;
+      }
+      console.error("❌ Project validation failed:", error);
+      throw new ValidationError("Failed to validate GCP project access", "projectId");
     }
 
     // Get service profile
@@ -221,6 +263,7 @@ deploymentRoutes.post("/api/deployments", async (ctx) => {
         billing: sp.billing,
         region: sp.region,
         gcp_project_id: $gcp_project_id,
+        gcp_project_name: $gcp_project_name,
         server_auth_token: sp.server_auth_token,
         environment_variables: sp.environment_variables,
         created_at: datetime(),
@@ -234,7 +277,8 @@ deploymentRoutes.post("/api/deployments", async (ctx) => {
       serviceProfileId: body.serviceProfileId,
       deploymentId,
       name: body.name,
-      gcp_project_id: user.gcp_project_id,
+      gcp_project_id: body.projectId,
+      gcp_project_name: projectName,
     });
 
     // Link config if provided
@@ -245,10 +289,40 @@ deploymentRoutes.post("/api/deployments", async (ctx) => {
       `, { deploymentId, configId: body.configId });
     }
 
+    // Get the created deployment to return to frontend
+    const createdDeployments = await db.run(`
+      MATCH (d:Deployment {id: $deploymentId})
+      OPTIONAL MATCH (d)-[:USES]->(p:ServiceProfile)
+      OPTIONAL MATCH (d)-[:RUNS]->(c:JSphereConfig)
+      RETURN d, p, c
+    `, { deploymentId });
+
+    const createdDeployment = createdDeployments[0];
+    const deploymentData = {
+      ...createdDeployment.d.properties,
+      profile: createdDeployment.p?.properties,
+      config: createdDeployment.c?.properties ? { 
+        ...createdDeployment.c.properties, 
+        project_auth_token: undefined 
+      } : undefined
+    };
+
     // Deploy to GCP asynchronously
     deployToGCP(deploymentId, user);
 
-    ctx.response.body = { success: true, deploymentId };
+    // Broadcast real-time update for deployment creation
+    broadcastDeploymentUpdate(user.github_id, {
+      type: 'deployment_created',
+      deploymentId,
+      deployment: deploymentData,
+      timestamp: new Date().toISOString()
+    });
+
+    ctx.response.body = { 
+      success: true, 
+      deploymentId,
+      deployment: deploymentData
+    };
   } catch (error) {
     if (error instanceof ValidationError) {
       ctx.response.status = 400;
@@ -286,7 +360,7 @@ deploymentRoutes.delete("/api/deployments/:id", async (ctx) => {
       try {
         const accessToken = decrypt(user.gcp_access_token);
         await gcp.deleteCloudRunService(
-          user.gcp_project_id,
+          deployment.gcp_project_id,
           deployment.region,
           deployment.cloud_run_service_name,
           accessToken
@@ -332,7 +406,7 @@ deploymentRoutes.get("/api/deployments/:id/metrics", async (ctx) => {
     const user = deployments[0].u.properties;
 
     // Provide fallback metrics if GCP is not connected or service doesn't exist
-    if (!user.gcp_access_token || !deployment.cloud_run_service_name || !user.gcp_project_id) {
+    if (!user.gcp_access_token || !deployment.cloud_run_service_name || !deployment.gcp_project_id) {
       console.log(`⚠️ Providing fallback metrics for deployment: ${deployment.name}`);
       ctx.response.body = { 
         metrics: generateFallbackMetrics(deployment.name, deployment.status)
@@ -344,17 +418,17 @@ deploymentRoutes.get("/api/deployments/:id/metrics", async (ctx) => {
       const accessToken = decrypt(user.gcp_access_token);
       
       // Validate service exists before fetching metrics
-      console.log(`🔍 Checking if service exists: ${deployment.cloud_run_service_name} in region: ${deployment.region || 'us-central1'}`);
+      console.log(`🔍 Checking if service exists: ${deployment.cloud_run_service_name} in project: ${deployment.gcp_project_id}, region: ${deployment.region || 'us-central1'}`);
       
       const serviceExists = await gcp.checkServiceExists(
-        user.gcp_project_id,
+        deployment.gcp_project_id,
         deployment.region || 'us-central1',
         deployment.cloud_run_service_name,
         accessToken
       );
 
       if (!serviceExists) {
-        console.log(`⚠️ Service ${deployment.cloud_run_service_name} not found in GCP, providing fallback metrics`);
+        console.log(`⚠️ Service ${deployment.cloud_run_service_name} not found in GCP project ${deployment.gcp_project_id}, providing fallback metrics`);
         ctx.response.body = { 
           metrics: generateFallbackMetrics(deployment.name, 'service-not-found'),
           warning: "Service not found in GCP - using fallback metrics"
@@ -362,9 +436,9 @@ deploymentRoutes.get("/api/deployments/:id/metrics", async (ctx) => {
         return;
       }
 
-      console.log(`✅ Service ${deployment.cloud_run_service_name} exists, fetching real metrics`);
+      console.log(`✅ Service ${deployment.cloud_run_service_name} exists in project ${deployment.gcp_project_id}, fetching real metrics`);
       const metrics = await gcp.getServiceMetrics(
-        user.gcp_project_id,
+        deployment.gcp_project_id,
         deployment.cloud_run_service_name,
         accessToken,
         deployment.region
@@ -407,7 +481,7 @@ deploymentRoutes.get("/api/deployments/:id/logs", async (ctx) => {
     const user = deployments[0].u.properties;
 
     // Provide fallback logs if GCP is not connected or service doesn't exist
-    if (!user.gcp_access_token || !deployment.cloud_run_service_name || !user.gcp_project_id) {
+    if (!user.gcp_access_token || !deployment.cloud_run_service_name || !deployment.gcp_project_id) {
       console.log(`⚠️ Providing fallback logs for deployment: ${deployment.name}`);
       ctx.response.body = { 
         logs: generateFallbackLogs(deployment.name, deployment.status)
@@ -419,23 +493,26 @@ deploymentRoutes.get("/api/deployments/:id/logs", async (ctx) => {
       const accessToken = decrypt(user.gcp_access_token);
       
       // Validate service exists before fetching logs
+      console.log(`🔍 Checking if service exists for logs: ${deployment.cloud_run_service_name} in project: ${deployment.gcp_project_id}, region: ${deployment.region || 'us-central1'}`);
+      
       const serviceExists = await gcp.checkServiceExists(
-        user.gcp_project_id,
+        deployment.gcp_project_id,
         deployment.region || 'us-central1',
         deployment.cloud_run_service_name,
         accessToken
       );
 
       if (!serviceExists) {
-        console.log(`⚠️ Service ${deployment.cloud_run_service_name} not found, providing fallback logs`);
+        console.log(`⚠️ Service ${deployment.cloud_run_service_name} not found in GCP project ${deployment.gcp_project_id}, providing fallback logs`);
         ctx.response.body = { 
           logs: generateFallbackLogs(deployment.name, 'service-not-found')
         };
         return;
       }
 
+      console.log(`✅ Service ${deployment.cloud_run_service_name} exists in project ${deployment.gcp_project_id}, fetching real logs`);
       const logs = await gcp.getServiceLogs(
-        user.gcp_project_id,
+        deployment.gcp_project_id,
         deployment.cloud_run_service_name,
         accessToken
       );
@@ -467,21 +544,33 @@ deploymentRoutes.get("/api/deployments/events", async (ctx) => {
       try {
         // Import JWT utility to verify token
         const { verifyJWT } = await import("../utils/jwt.ts");
-        const payload = await verifyJWT(token);
+        
+        // Decode the token if it's URL encoded
+        const decodedToken = decodeURIComponent(token);
+        console.log(`🔍 SSE token verification attempt for token: ${decodedToken.substring(0, 20)}...`);
+        
+        const payload = await verifyJWT(decodedToken);
         userId = payload.userId;
-        console.log(`📡 SSE authentication via query parameter for user: ${userId}`);
+        console.log(`📡 SSE authentication via query parameter successful for user: ${userId}`);
       } catch (error) {
         console.error('❌ SSE token verification failed:', error);
+        console.error('❌ Token details:', {
+          originalToken: token.substring(0, 20) + '...',
+          decodedToken: decodeURIComponent(token).substring(0, 20) + '...',
+          errorMessage: (error as Error).message
+        });
         ctx.response.status = 401;
-        ctx.response.body = { error: "Invalid token" };
+        ctx.response.body = { error: "Invalid or expired token" };
         return;
       }
     } else {
-      console.error('❌ SSE connection attempted without authentication');
+      console.error('❌ SSE connection attempted without authentication - no token provided');
       ctx.response.status = 401;
-      ctx.response.body = { error: "Authentication required" };
+      ctx.response.body = { error: "Authentication required - no token provided" };
       return;
     }
+  } else {
+    console.log(`📡 SSE authentication via middleware successful for user: ${userId}`);
   }
 
   // Set SSE headers
@@ -509,7 +598,7 @@ deploymentRoutes.get("/api/deployments/events", async (ctx) => {
 
       console.log(`📡 SSE connection established for user: ${userId}`);
     },
-    cancel() {
+    cancel(controller: any) {
       // Remove connection when client disconnects
       const userConnections = sseConnections.get(userId);
       if (userConnections) {
@@ -560,26 +649,29 @@ deploymentRoutes.post("/api/deployments/sync", async (ctx) => {
       errors: 0
     };
 
-    // Group deployments by region for efficient API calls
-    const deploymentsByRegion = new Map();
+    // Group deployments by project and region for efficient API calls
+    const deploymentsByProjectAndRegion = new Map();
     for (const record of deployments) {
       const deployment = record.d.properties;
+      const projectId = deployment.gcp_project_id;
       const region = deployment.region;
+      const key = `${projectId}:${region}`;
       
-      if (!deploymentsByRegion.has(region)) {
-        deploymentsByRegion.set(region, []);
+      if (!deploymentsByProjectAndRegion.has(key)) {
+        deploymentsByProjectAndRegion.set(key, []);
       }
-      deploymentsByRegion.get(region).push(deployment);
+      deploymentsByProjectAndRegion.get(key).push(deployment);
     }
 
-    // Check each region
-    for (const [region, regionDeployments] of deploymentsByRegion) {
+    // Check each project/region combination
+    for (const [key, regionDeployments] of deploymentsByProjectAndRegion) {
+      const [projectId, region] = key.split(':');
       try {
-        console.log(`📡 Checking region ${region} with ${regionDeployments.length} deployments`);
+        console.log(`📡 Checking project ${projectId}, region ${region} with ${regionDeployments.length} deployments`);
         
-        // Get all Cloud Run services in this region
+        // Get all Cloud Run services in this project/region
         const cloudRunServices = await gcp.listCloudRunServices(
-          user.gcp_project_id,
+          projectId,
           region,
           accessToken
         );
@@ -810,13 +902,13 @@ async function deployToGCP(deploymentId: string, user: any) {
     const serviceConfig = gcp.generateServiceConfig({
       ...deployment,
       server_auth_token: decryptedServerAuthToken,
-      gcp_project_id: user.gcp_project_id,
+      gcp_project_id: deployment.gcp_project_id,
     });
 
-    console.log(`🚀 Starting deployment for: ${deployment.name}`);
+    console.log(`🚀 Starting deployment for: ${deployment.name} in project: ${deployment.gcp_project_id}`);
     
     const result = await gcp.createCloudRunService(
-      user.gcp_project_id,
+      deployment.gcp_project_id,
       deployment.region,
       serviceConfig,
       accessToken
@@ -824,7 +916,7 @@ async function deployToGCP(deploymentId: string, user: any) {
 
     // Set IAM policy to allow unauthenticated invocations
     await gcp.setServiceIamPolicy(
-      user.gcp_project_id,
+      deployment.gcp_project_id,
       deployment.region,
       deployment.name,
       accessToken
@@ -843,7 +935,7 @@ async function deployToGCP(deploymentId: string, user: any) {
       
       try {
         const status = await gcp.getServiceStatus(
-          user.gcp_project_id,
+          deployment.gcp_project_id,
           deployment.region,
           deployment.name,
           accessToken
@@ -858,7 +950,15 @@ async function deployToGCP(deploymentId: string, user: any) {
           await new Promise(resolve => setTimeout(resolve, 10000));
         }
       } catch (statusError) {
-        console.log(`⚠️ Error checking status: ${(statusError as Error).message}`);
+        const errorMessage = (statusError as Error).message;
+        
+        // Handle expected 404 errors more gracefully during deployment
+        if (errorMessage.includes('404') || errorMessage.includes('not found') || errorMessage.includes('does not exist')) {
+          console.log(`⏳ Service '${deployment.name}' not found yet (expected during deployment), waiting 10 seconds...`);
+        } else {
+          console.log(`⚠️ Error checking status: ${errorMessage}`);
+        }
+        
         await new Promise(resolve => setTimeout(resolve, 10000));
       }
     }

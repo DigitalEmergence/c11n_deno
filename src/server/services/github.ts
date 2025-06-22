@@ -33,21 +33,27 @@ export class GitHubService {
 
   async scanAppConfigs(owner: string, repo: string, token: string): Promise<string[]> {
     try {
+      console.log(`Scanning app configs for ${owner}/${repo}`);
       const contents = await this.getRepoContents(owner, repo, ".", token);
       
       if (!Array.isArray(contents)) {
+        console.log(`Repository contents is not an array for ${owner}/${repo}`);
         return [];
       }
 
-      return contents
+      const appConfigs = contents
         .filter((file: any) => 
           file.type === "file" && 
           file.name.startsWith("app.") && 
           file.name.endsWith(".json")
         )
         .map((file: any) => file.name.replace(".json", ""));
+      
+      console.log(`Found ${appConfigs.length} app configs in ${owner}/${repo}:`, appConfigs);
+      return appConfigs;
     } catch (error) {
-      console.error("Failed to scan app configs:", error);
+      console.error(`Failed to scan app configs for ${owner}/${repo}:`, error);
+      // Return empty array instead of throwing to allow the UI to handle gracefully
       return [];
     }
   }

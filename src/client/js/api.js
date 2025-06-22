@@ -34,15 +34,20 @@ export class API {
     try {
       const response = await fetch(url, config);
       
-      if (response.status === 401) {
-        this.setToken(null);
-        window.location.reload();
-        return;
-      }
-
       if (!response.ok) {
-        const error = await response.json();
-        throw new Error(error.error || 'Request failed');
+        const errorData = await response.json().catch(() => ({ error: 'Request failed' }));
+        const error = new Error(errorData.error || 'Request failed');
+        error.status = response.status;
+        error.response = errorData;
+        
+        // Only reload on 401 for auth endpoints, not for GCP-related endpoints
+        if (response.status === 401 && (endpoint.includes('/auth/') || endpoint === '/user')) {
+          this.setToken(null);
+          window.location.reload();
+          return;
+        }
+        
+        throw error;
       }
 
       return await response.json();

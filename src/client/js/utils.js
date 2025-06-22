@@ -47,7 +47,7 @@ export const utils = {
   },
 
   // Show toast notification
-  showToast(message, type = 'info') {
+  showToast(message, type = 'info', duration = 3000) {
     // Create or get toast container
     let toastContainer = document.getElementById('toast-container');
     if (!toastContainer) {
@@ -59,7 +59,13 @@ export const utils = {
 
     const toast = document.createElement('div');
     toast.className = `toast toast-${type}`;
-    toast.textContent = message;
+    
+    // Check if message contains HTML (simple check for < and > characters)
+    if (message.includes('<') && message.includes('>')) {
+      toast.innerHTML = message;
+    } else {
+      toast.textContent = message;
+    }
     
     // Add to container instead of body
     toastContainer.appendChild(toast);
@@ -67,7 +73,7 @@ export const utils = {
     // Animate in
     setTimeout(() => toast.classList.add('visible'), 100);
     
-    // Remove after 3 seconds
+    // Remove after specified duration
     setTimeout(() => {
       toast.classList.remove('visible');
       setTimeout(() => {
@@ -77,7 +83,7 @@ export const utils = {
           toastContainer.remove();
         }
       }, 300);
-    }, 3000);
+    }, duration);
   },
 
   // Debounce function for search/input
