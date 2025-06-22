@@ -83,7 +83,9 @@ class C11NApp {
           }
           break;
         case 'user_logged_out':
+          console.log('🔄 user_logged_out event received - rendering auth page');
           this.renderAuthPage();
+          console.log('✅ Auth page rendered after logout');
           break;
       }
     });
@@ -232,7 +234,7 @@ class C11NApp {
           <button class="btn btn-icon btn-secondary dropdown-toggle" onclick="window.app.toggleGCPMenu(event)" title="GCP Options">
             ⚙️
           </button>
-          <div class="dropdown-menu">
+          <div class="dropdown-menu hidden">
             <div class="dropdown-item" onclick="window.app.showSelectGCPProjectModal()">
               <i class="fas fa-exchange-alt"></i> Change Project
             </div>
@@ -436,7 +438,14 @@ class C11NApp {
   }
 
   async logout() {
-    await this.userManager.logout(this.auth);
+    console.log('🚪 Main app logout method called');
+    try {
+      await this.userManager.logout();
+      console.log('✅ Logout completed successfully');
+    } catch (error) {
+      console.error('❌ Logout failed:', error);
+      utils.showToast('Logout failed: ' + error.message, 'error');
+    }
   }
 
   // GCP methods
@@ -457,22 +466,25 @@ class C11NApp {
     const dropdown = event.target.closest('.dropdown');
     const menu = dropdown.querySelector('.dropdown-menu');
     
-    // Close other dropdowns
-    document.querySelectorAll('.dropdown.open').forEach(d => {
-      if (d !== dropdown) d.classList.remove('open');
+    // Close other dropdowns first
+    document.querySelectorAll('.dropdown-menu').forEach(m => {
+      if (m !== menu && !m.classList.contains('hidden')) {
+        m.classList.add('hidden');
+      }
     });
     
-    dropdown.classList.toggle('open');
+    // Toggle this dropdown
+    menu.classList.toggle('hidden');
     
     // Close dropdown when clicking outside
     const closeHandler = (e) => {
       if (!dropdown.contains(e.target)) {
-        dropdown.classList.remove('open');
+        menu.classList.add('hidden');
         document.removeEventListener('click', closeHandler);
       }
     };
     
-    if (dropdown.classList.contains('open')) {
+    if (!menu.classList.contains('hidden')) {
       document.addEventListener('click', closeHandler);
     }
   }
@@ -743,4 +755,7 @@ class C11NApp {
 }
 
 // Initialize app
+console.log('🚀 Initializing C11NApp...');
 window.app = new C11NApp();
+console.log('✅ window.app initialized:', window.app);
+console.log('🔍 window.app.logout type:', typeof window.app.logout);

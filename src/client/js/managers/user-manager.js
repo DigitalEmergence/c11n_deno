@@ -7,19 +7,22 @@ export class UserManager {
   }
 
   async logout() {
+    console.log('🚪 UserManager.logout() called - starting logout process');
+    
     try {
-      // Clear local storage
+      console.log('🧹 Step 1: Clearing local storage token...');
       localStorage.removeItem('c11n_token');
+      console.log('✅ Local storage token cleared');
       
-      // Call logout endpoint if available
+      console.log('🌐 Step 2: Calling logout endpoint...');
       try {
         await this.api.post('/auth/logout');
+        console.log('✅ Logout endpoint called successfully');
       } catch (error) {
-        // Ignore logout endpoint errors, still proceed with local logout
-        console.warn('Logout endpoint failed:', error);
+        console.warn('⚠️ Logout endpoint failed (continuing anyway):', error);
       }
       
-      // Clear app state
+      console.log('🗑️ Step 3: Clearing app state...');
       this.dataManager.setUser(null);
       this.dataManager.setDeployments([]);
       this.dataManager.setConfigs([]);
@@ -27,17 +30,24 @@ export class UserManager {
       this.dataManager.setWorkspaces([]);
       this.dataManager.setServiceProfiles([]);
       this.dataManager.setGCPProjects([]);
+      console.log('✅ App state cleared');
       
-      // Clear API token
+      console.log('🔑 Step 4: Clearing API token...');
       this.api.setToken(null);
+      console.log('✅ API token cleared');
       
-      // Notify listeners of logout
+      console.log('📢 Step 5: Notifying listeners of logout...');
       this.dataManager.notifyListeners('user_logged_out', null);
+      console.log('✅ Logout listeners notified');
       
+      console.log('🎉 Step 6: Showing success toast...');
       utils.showToast('Logged out successfully', 'success');
+      console.log('✅ LOGOUT COMPLETED SUCCESSFULLY');
+      
       return true;
     } catch (error) {
-      console.error('Logout failed:', error);
+      console.error('❌ LOGOUT FAILED:', error);
+      console.error('Error stack:', error.stack);
       utils.showToast('Logout failed', 'error');
       throw error;
     }

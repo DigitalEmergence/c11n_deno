@@ -960,6 +960,63 @@
   display: inline-block;
 }
 
+/* Navbar-specific dropdown styles */
+.navbar-dropdown {
+  position: relative;
+  display: inline-block;
+}
+
+.navbar-dropdown-menu {
+  position: absolute;
+  top: 100%;
+  right: 0;
+  min-width: 180px;
+  background: white;
+  border: 1px solid var(--color-gray-200);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-lg);
+  z-index: 9999 !important;
+  opacity: 1;
+  transform: translateY(0);
+  transition: all 0.2s ease;
+  margin-top: var(--spacing-2);
+  pointer-events: auto;
+}
+
+.navbar-dropdown-menu.hidden {
+  opacity: 0;
+  transform: translateY(-10px);
+  pointer-events: none;
+  visibility: hidden;
+}
+
+.navbar-dropdown-item {
+  padding: var(--spacing-3) var(--spacing-4);
+  cursor: pointer;
+  border-bottom: 1px solid var(--color-gray-100);
+  transition: background-color 0.2s ease;
+  color: var(--color-gray-700);
+  font-size: var(--font-size-sm);
+  position: relative;
+  z-index: 10000;
+  pointer-events: auto;
+  display: block;
+  width: 100%;
+  text-align: left;
+  user-select: none;
+  box-sizing: border-box;
+}
+
+.navbar-dropdown-item:hover {
+  background: var(--color-gray-50);
+  color: var(--color-gray-900);
+}
+
+.navbar-dropdown-item:last-child {
+  border-bottom: none;
+}
+
+/* General dropdown styles (for GCP and other dropdowns) */
 .dropdown-menu {
   position: absolute;
   top: 100%;
@@ -980,8 +1037,9 @@
 .dropdown-menu.hidden {
   opacity: 0;
   transform: translateY(-10px);
-  pointer-events: none;
+  pointer-events: none !important;
   visibility: hidden;
+  display: none !important;
 }
 
 .dropdown-item {
@@ -1006,17 +1064,6 @@
 
 .dropdown-item:last-child {
   border-bottom: none;
-}
-
-/* Debug styles - temporary */
-.dropdown-menu:not(.hidden) {
-  border: 2px solid red !important;
-  background: yellow !important;
-}
-
-.dropdown-item {
-  border: 1px solid blue !important;
-  background: lightgreen !important;
 }
 
 /* Error states */
