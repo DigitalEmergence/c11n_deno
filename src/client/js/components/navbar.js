@@ -64,38 +64,20 @@ export class Navbar {
 
     console.log('🔧 Attaching navbar event listeners...');
 
-    // Close dropdown when clicking outside
+    // Close dropdown when clicking outside - make this more robust
     this.outsideClickHandler = (e) => {
+      // Only handle user dropdown closing here - let other systems handle their own dropdowns
       if (!e.target.closest('.user-profile-dropdown')) {
         const dropdown = document.getElementById('user-dropdown');
-        if (dropdown) {
+        if (dropdown && !dropdown.classList.contains('hidden')) {
           dropdown.classList.add('hidden');
         }
-      }
-      
-      // Also close any universal dropdowns when clicking outside
-      if (!e.target.closest('.universal-plus-btn') && !e.target.closest('.universal-dropdown-menu')) {
-        const universalDropdowns = document.querySelectorAll('.universal-dropdown-menu');
-        universalDropdowns.forEach(dropdown => {
-          if (dropdown.classList.contains('universal-dropdown-menu')) {
-            dropdown.classList.remove('expanding');
-            dropdown.classList.add('collapsing');
-            setTimeout(() => dropdown.remove(), 300);
-          } else {
-            dropdown.remove();
-          }
-        });
-      }
-      
-      // Close GCP dropdowns when clicking outside
-      if (!e.target.closest('.gcp-settings-btn') && !e.target.closest('.gcp-dropdown-menu')) {
-        const gcpDropdowns = document.querySelectorAll('.gcp-dropdown-menu');
-        gcpDropdowns.forEach(dropdown => dropdown.remove());
       }
     };
     document.addEventListener('click', this.outsideClickHandler);
 
     // Handle navbar dropdown item clicks with immediate execution (no setTimeout)
+    // Make this more robust by checking for the dropdown's existence
     this.dropdownClickHandler = (e) => {
       // Check if this is a NAVBAR dropdown item click (not GCP dropdown)
       if (e.target.classList.contains('navbar-dropdown-item') && e.target.hasAttribute('data-action')) {
@@ -115,6 +97,23 @@ export class Navbar {
     };
     document.addEventListener('click', this.dropdownClickHandler, true); // Use capture phase
 
+    // Add a more robust user menu toggle handler that doesn't rely on global coordination
+    this.userMenuToggleHandler = (e) => {
+      if (e.target.closest('.user-profile-button')) {
+        console.log('👤 User profile button clicked directly');
+        e.preventDefault();
+        e.stopPropagation();
+        
+        // Toggle the dropdown directly here as a fallback
+        const dropdown = document.getElementById('user-dropdown');
+        if (dropdown) {
+          dropdown.classList.toggle('hidden');
+          console.log('👤 User dropdown toggled directly, hidden:', dropdown.classList.contains('hidden'));
+        }
+      }
+    };
+    document.addEventListener('click', this.userMenuToggleHandler, true);
+
     Navbar.globalEventListenersAttached = true;
     console.log('✅ Navbar event listeners attached successfully');
   }
@@ -129,7 +128,7 @@ export class Navbar {
   }
 
   handleDropdownAction(action) {
-    console.log('🔄 Handling dropdown action:', action);
+    console.log('� Handling dropdown action:', action);
     
     try {
       // Close the dropdown first
@@ -159,7 +158,7 @@ export class Navbar {
           break;
           
         case 'logout':
-          console.log('🚪 LOGOUT ACTION TRIGGERED - calling window.app.logout()');
+          console.log('� LOGOUT ACTION TRIGGERED - calling window.app.logout()');
           if (window.app && typeof window.app.logout === 'function') {
             console.log('✅ window.app.logout function exists, calling it now...');
             // Call logout immediately without setTimeout to avoid any interference

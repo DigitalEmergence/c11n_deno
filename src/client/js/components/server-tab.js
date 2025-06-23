@@ -19,9 +19,6 @@ export class ServerTabs {
         <div class="empty-state">
           <h3>No servers connected</h3>
           <p>Link a local server or create a cloud deployment to get started.</p>
-          <button class="btn btn-primary" onclick="window.app.showUniversalMenu()">
-            Get Started
-          </button>
         </div>
       `;
       return;

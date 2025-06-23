@@ -21,14 +21,15 @@
 
 /* Modal content */
 .modal-content {
-  background: white;
-  border-radius: var(--radius-xl);
+  background: linear-gradient(90deg, rgba(218, 207, 224, 0.55), rgba(110, 130, 155, 0.55));
+  /* border-radius: var(--radius-xl); */
   max-width: 500px;
   width: 90%;
   max-height: 80vh;
   overflow-y: auto;
   transform: scale(0.9);
   transition: transform 0.3s ease;
+  color: white;
 }
 
 .modal-overlay.visible .modal-content {
@@ -37,7 +38,7 @@
 
 .modal-header {
   padding: var(--spacing-6) var(--spacing-6) var(--spacing-4);
-  border-bottom: 1px solid var(--color-gray-200);
+  /* border-bottom: 1px solid var(--color-gray-200); */
   display: flex;
   justify-content: space-between;
   align-items: center;
@@ -46,20 +47,20 @@
 .modal-title {
   font-size: var(--font-size-xl);
   font-weight: 600;
-  color: var(--color-gray-900);
+  color: white;
 }
 
 .modal-close {
   background: none;
   border: none;
-  font-size: var(--font-size-xl);
+  font-size: 2rem;
   cursor: pointer;
-  color: var(--color-gray-500);
+  color: white;
   padding: var(--spacing-1);
 }
 
 .modal-close:hover {
-  color: var(--color-gray-700);
+  color: var(--color-error);
 }
 
 .modal-body {
@@ -68,9 +69,9 @@
 
 .modal-footer {
   padding: var(--spacing-4) var(--spacing-6);
-  border-top: 1px solid var(--color-gray-200);
+  /* border-top: 1px solid var(--color-gray-200); */
   display: flex;
-  justify-content: flex-end;
+  justify-content: center;
   gap: var(--spacing-3);
 }
 
@@ -83,19 +84,30 @@
   display: block;
   font-size: var(--font-size-sm);
   font-weight: 500;
-  color: var(--color-gray-700);
+  color: #ffffff;
   margin-bottom: var(--spacing-2);
 }
 
 .form-input,
 .form-select {
+  background: transparent;
+  display: flex;
+  color: white;
   width: 100%;
-  padding: var(--spacing-3) var(--spacing-4);
+  padding: 1rem;
   border: 1px solid var(--color-gray-300);
-  border-radius: var(--radius-md);
-  font-family: inherit;
+  font-family: var(--font-family);
   font-size: var(--font-size-base);
   transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+/* Dropdown option styles */
+.form-select option {
+  background: rgb(0, 0, 0);
+  color: white;
+  width: 100px;
+  overflow-x: hidden;
+  margin: 10px;
 }
 
 .form-input:focus,
@@ -107,7 +119,7 @@
 
 .form-help {
   font-size: var(--font-size-xs);
-  color: var(--color-gray-500);
+  color: #c7c7c7;
   margin-top: var(--spacing-1);
 }
 
@@ -189,6 +201,7 @@
 
 .project-option {
   display: flex;
+  background-color: black;
   align-items: flex-start;
   gap: var(--spacing-3);
   padding: var(--spacing-4);

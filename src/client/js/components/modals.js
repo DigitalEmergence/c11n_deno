@@ -30,11 +30,6 @@ export class Modal {
       </div>
       ${options.primaryButton || options.secondaryButton ? `
         <div class="modal-footer">
-          ${options.secondaryButton ? `
-            <button class="btn btn-secondary" onclick="${options.secondaryButton.action || 'window.app.modal.hide()'}">
-              ${options.secondaryButton.text || 'Cancel'}
-            </button>
-          ` : ''}
           ${options.primaryButton ? `
             <button class="btn btn-primary" onclick="${options.primaryButton.action}" ${options.primaryButton.disabled ? 'disabled' : ''}>
               ${options.primaryButton.text || 'Save'}
@@ -57,47 +52,40 @@ export class Modal {
     console.log('showDropdown called with items:', items);
     console.log('targetElement:', targetElement);
     
-    // Check if there's already a dropdown open for this target
-    const existingDropdowns = document.querySelectorAll('.universal-dropdown-menu, .navbar-dropdown-menu, .gcp-dropdown-menu');
-    let hasExistingDropdown = false;
+    // Only handle universal dropdowns - don't interfere with navbar or GCP dropdowns
+    const existingUniversalDropdowns = document.querySelectorAll('.universal-dropdown-menu');
+    let hasExistingUniversalDropdown = false;
     
-    existingDropdowns.forEach(dropdown => {
+    existingUniversalDropdowns.forEach(dropdown => {
       // If clicking the same button that opened the dropdown, close it
       if (dropdown.dataset.targetId === targetElement.id || 
           (targetElement.closest('.universal-plus-btn') && dropdown.dataset.isUniversal === 'true')) {
-        hasExistingDropdown = true;
-        // Use collapsing animation if it's a universal dropdown
-        if (dropdown.classList.contains('universal-dropdown-menu')) {
-          dropdown.classList.remove('expanding');
-          dropdown.classList.add('collapsing');
-          setTimeout(() => {
-            dropdown.remove();
-            if (onCloseCallback) {
-              onCloseCallback();
-            }
-          }, 300);
-        } else {
+        hasExistingUniversalDropdown = true;
+        // Use collapsing animation
+        dropdown.classList.remove('expanding');
+        dropdown.classList.add('collapsing');
+        setTimeout(() => {
           dropdown.remove();
           if (onCloseCallback) {
             onCloseCallback();
           }
-        }
+        }, 300);
       } else {
-        // Close any other open dropdowns with appropriate animation
-        if (dropdown.classList.contains('universal-dropdown-menu')) {
-          dropdown.classList.remove('expanding');
-          dropdown.classList.add('collapsing');
-          setTimeout(() => dropdown.remove(), 300);
-        } else {
-          dropdown.remove();
-        }
+        // Close any other universal dropdowns
+        dropdown.classList.remove('expanding');
+        dropdown.classList.add('collapsing');
+        setTimeout(() => dropdown.remove(), 300);
       }
     });
     
-    // If we just closed an existing dropdown from the same target, don't create a new one
-    if (hasExistingDropdown) {
+    // If we just closed an existing universal dropdown from the same target, don't create a new one
+    if (hasExistingUniversalDropdown) {
       return;
     }
+    
+    // Close other dropdown types through their respective coordination systems
+    // This ensures proper cleanup without breaking event listeners
+    this.closeOtherDropdownTypes();
     
     // Create dropdown
     const dropdown = document.createElement('div');
@@ -176,5 +164,29 @@ export class Modal {
       this.currentDropdown = null;
       this.currentDropdownCallback = null;
     }
+  }
+
+  closeOtherDropdownTypes() {
+    // Close navbar user dropdown through its proper method
+    const userDropdown = document.getElementById('user-dropdown');
+    if (userDropdown && !userDropdown.classList.contains('hidden')) {
+      userDropdown.classList.add('hidden');
+    }
+    
+    // Close GCP dropdowns and reset their icons
+    const gcpDropdowns = document.querySelectorAll('.gcp-dropdown-menu');
+    gcpDropdowns.forEach(menu => {
+      if (!menu.classList.contains('hidden')) {
+        menu.classList.add('hidden');
+        // Reset the settings icon rotation
+        const settingsIcon = menu.closest('.gcp-dropdown')?.querySelector('.settings-icon');
+        if (settingsIcon) {
+          settingsIcon.classList.remove('rotated');
+        }
+      }
+    });
+    
+    // DON'T reset plus icon rotation here - let the main app handle it
+    // The plus icon should stay rotated while the universal dropdown is open
   }
 }
