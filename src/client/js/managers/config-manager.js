@@ -39,9 +39,18 @@ export class ConfigManager {
   async createWorkspace(workspaceData) {
     try {
       const response = await this.api.post('/workspaces', workspaceData);
-      this.dataManager.addWorkspace(response.workspace);
-      utils.showToast('Workspace created successfully!', 'success');
-      return response.workspace;
+      // The API now returns the full workspace object
+      if (response.workspace) {
+        this.dataManager.addWorkspace(response.workspace);
+        utils.showToast('Workspace created successfully!', 'success');
+        return response.workspace;
+      } else {
+        // Fallback: if workspace object is not returned, fetch it by ID
+        const workspaceResponse = await this.api.get(`/workspaces/${response.workspaceId}`);
+        this.dataManager.addWorkspace(workspaceResponse.workspace);
+        utils.showToast('Workspace created successfully!', 'success');
+        return workspaceResponse.workspace;
+      }
     } catch (error) {
       utils.showToast('Failed to create workspace: ' + error.message, 'error');
       throw error;
@@ -80,11 +89,11 @@ export class ConfigManager {
 
     modal.show('Manage JSphere Configs', `
       <div class="config-list">
-        ${configs.length > 0 ? configs.map(config => `
+        ${configs.length > 0 ? configs.filter(config => config && config.id && config.name).map(config => `
           <div class="config-item">
             <div class="config-info">
               <div class="config-name">${config.name}</div>
-              <div class="config-description">${config.project_namespace}/${config.project_name} - ${config.project_app_config}</div>
+              <div class="config-description">${config.project_namespace || 'Unknown'}/${config.project_name || 'Unknown'} - ${config.project_app_config || 'Unknown'}</div>
             </div>
             <div class="config-actions">
               <button class="btn btn-sm btn-secondary" onclick="window.app.configManager.editConfig('${config.id}')">
@@ -263,7 +272,19 @@ export class ConfigManager {
     };
 
     try {
-      await this.createWorkspace(workspaceData);
+      const newWorkspace = await this.createWorkspace(workspaceData);
+      
+      // If we're in the config wizard, refresh the workspace list and auto-select the new workspace
+      if (this.configWizardData && this.configWizardData.step === 1) {
+        this.configWizardData.config.workspace_id = newWorkspace.id;
+        // Set credential source to workspace
+        const workspaceRadio = document.querySelector('input[name="credential_source"][value="workspace"]');
+        if (workspaceRadio) {
+          workspaceRadio.checked = true;
+        }
+        // Refresh the config wizard step to show the new workspace
+        this.showConfigWizardStep();
+      }
       
       if (window.app && window.app.modal) {
         window.app.modal.hide();
@@ -649,7 +670,7 @@ export class ConfigManager {
             <label class="form-label">Custom Variables</label>
             
             <!-- Inline Add Variable Form -->
-            <div class="inline-variable-form" style="margin-bottom: 15px; padding: 15px; border: 1px solid #e0e0e0; border-radius: 6px; background: #f9f9f9;">
+            <div class="inline-variable-form" style="margin-bottom: 15px; padding: 15px; border: 1px solid #e0e0e0; border-radius: 6px;">
               <div style="display: grid; grid-template-columns: 1fr 1fr auto auto auto; gap: 10px; align-items: end;">
                 <div>
                   <input type="text" id="new-var-name" class="form-input" placeholder="variable_name" 
@@ -821,11 +842,106 @@ export class ConfigManager {
   }
 
   async editConfig(id) {
-    utils.showToast('Edit config feature coming soon', 'info');
+    const config = this.getConfig(id);
+    if (!config) {
+      utils.showToast('Configuration not found', 'error');
+      return;
+    }
+
+    // Initialize edit wizard with existing config data
+    this.configWizardData = {
+      step: 1,
+      maxSteps: 7,
+      isEditing: true,
+      editingId: id,
+      config: {
+        name: config.name,
+        workspace_id: config.workspace_id || null,
+        project_namespace: config.project_namespace,
+        project_auth_token: config.project_auth_token,
+        project_name: config.project_name,
+        project_app_config: config.project_app_config,
+        project_reference: config.project_reference || '',
+        server_http_port: config.server_http_port || '80',
+        server_debug_port: config.server_debug_port || '9229',
+        project_preview_branch: config.project_preview_branch || '',
+        project_preview_server: config.project_preview_server || '',
+        project_preview_server_auth_token: config.project_preview_server_auth_token || '',
+        custom_variables: config.custom_variables || {}
+      },
+      validation: {
+        isConnected: true, // Assume existing config has valid credentials
+        userInfo: null,
+        projects: [],
+        appConfigs: [],
+        references: []
+      }
+    };
+
+    this.showEditConfigWizardStep();
   }
 
   async editWorkspace(id) {
-    utils.showToast('Edit workspace feature coming soon', 'info');
+    const workspace = this.getWorkspace(id);
+    if (!workspace) {
+      utils.showToast('Workspace not found', 'error');
+      return;
+    }
+
+    this.workspaceValidationData = {
+      isConnected: true, // Assume existing workspace has valid credentials
+      userInfo: null
+    };
+
+    if (window.app && window.app.modal) {
+      window.app.modal.show('Edit Workspace', `
+        <form id="edit-workspace-form">
+          <div class="form-group">
+            <label class="form-label">Workspace Name *</label>
+            <input type="text" class="form-input" name="name" required 
+                   value="${workspace.name}" placeholder="my-workspace">
+            <div class="form-help">A unique name for this workspace</div>
+          </div>
+          <div class="form-group">
+            <label class="form-label">GitHub Username *</label>
+            <input type="text" class="form-input" name="project_namespace" required 
+                   value="${workspace.project_namespace}" placeholder="your-github-username">
+            <div class="form-help">Your GitHub username</div>
+          </div>
+          <div class="form-group">
+            <label class="form-label">GitHub Token</label>
+            <input type="password" class="form-input" name="project_auth_token" 
+                   placeholder="Enter new token (leave blank to keep current)">
+            <div class="form-help">GitHub personal access token with repo access (leave blank to keep current token)</div>
+          </div>
+          <div class="form-group">
+            <button type="button" class="btn btn-secondary" onclick="window.app.configManager.handleValidateEditWorkspaceCredentials('${id}')" 
+                    id="validate-edit-workspace-btn">
+              Validate Current Credentials
+            </button>
+            <div id="edit-workspace-validation-result" class="form-help"></div>
+          </div>
+          <div id="edit-workspace-user-info" style="display: none;" class="form-group">
+            <div class="user-info-card">
+              <img id="edit-workspace-user-avatar" src="" alt="" class="user-avatar">
+              <div class="user-details">
+                <div id="edit-workspace-user-name" class="user-name"></div>
+                <div id="edit-workspace-user-username" class="user-username"></div>
+                <div id="edit-workspace-projects-count" class="user-projects"></div>
+              </div>
+            </div>
+          </div>
+        </form>
+      `, {
+        primaryButton: {
+          text: 'Update Workspace',
+          action: `window.app.configManager.handleUpdateWorkspace('${id}')`
+        },
+        secondaryButton: {
+          text: 'Cancel'
+        }
+      });
+    }
   }
 
   // Get configs
@@ -1472,6 +1588,172 @@ export class ConfigManager {
     const selectedCard = document.querySelector(`.workspace-card[onclick*="${workspaceId}"]`);
     if (selectedCard) {
       selectedCard.classList.add('selected');
+    }
+  }
+
+  // Edit workspace validation handler
+  async handleValidateEditWorkspaceCredentials(workspaceId) {
+    const form = document.getElementById('edit-workspace-form');
+    const formData = new FormData(form);
+    const namespace = formData.get('project_namespace');
+    const token = formData.get('project_auth_token');
+    
+    if (!namespace) {
+      utils.showToast('Please enter username', 'error');
+      return;
+    }
+
+    const btn = document.getElementById('validate-edit-workspace-btn');
+    const result = document.getElementById('edit-workspace-validation-result');
+    const userInfo = document.getElementById('edit-workspace-user-info');
+    
+    btn.textContent = 'Validating...';
+    btn.disabled = true;
+
+    try {
+      let response;
+      
+      if (token) {
+        // Validate new token
+        response = await this.validateWorkspaceCredentials(namespace, token);
+        result.innerHTML = '<span class="text-success">✓ New credentials validated successfully</span>';
+      } else {
+        // Validate existing workspace credentials
+        response = await this.api.post(`/workspaces/${workspaceId}/validate`);
+        result.innerHTML = '<span class="text-success">✓ Current credentials are valid</span>';
+      }
+      
+      this.workspaceValidationData.isConnected = true;
+      this.workspaceValidationData.userInfo = response;
+      
+      // Show user info
+      document.getElementById('edit-workspace-user-avatar').src = response.avatar_url;
+      document.getElementById('edit-workspace-user-name').textContent = response.name || response.username;
+      document.getElementById('edit-workspace-user-username').textContent = '@' + response.username;
+      
+      // For existing workspace validation, we might not have projects count
+      if (response.projects) {
+        document.getElementById('edit-workspace-projects-count').textContent = `${response.projects.length} projects found`;
+      } else {
+        document.getElementById('edit-workspace-projects-count').textContent = 'Credentials validated';
+      }
+      
+      userInfo.style.display = 'block';
+      
+    } catch (error) {
+      result.innerHTML = '<span class="text-error">✗ Validation failed: ' + error.message + '</span>';
+      this.workspaceValidationData.isConnected = false;
+      userInfo.style.display = 'none';
+    } finally {
+      btn.textContent = 'Validate Current Credentials';
+      btn.disabled = false;
+    }
+  }
+
+  // Update workspace handler
+  async handleUpdateWorkspace(workspaceId) {
+    const form = document.getElementById('edit-workspace-form');
+    if (!utils.validateForm(form)) return;
+
+    const formData = new FormData(form);
+    const updateData = {
+      name: formData.get('name'),
+      project_namespace: formData.get('project_namespace')
+    };
+
+    // Only include token if provided
+    const token = formData.get('project_auth_token');
+    if (token) {
+      updateData.project_auth_token = token;
+    }
+
+    try {
+      await this.api.put(`/workspaces/${workspaceId}`, updateData);
+      
+      // Update the workspace in local state
+      const workspaces = this.dataManager.getWorkspaces();
+      const workspaceIndex = workspaces.findIndex(w => w.id === workspaceId);
+      if (workspaceIndex !== -1) {
+        workspaces[workspaceIndex] = { ...workspaces[workspaceIndex], ...updateData };
+        this.dataManager.setWorkspaces(workspaces);
+      }
+      
+      utils.showToast('Workspace updated successfully!', 'success');
+      
+      if (window.app && window.app.modal) {
+        window.app.modal.hide();
+      }
+    } catch (error) {
+      utils.showToast('Failed to update workspace: ' + error.message, 'error');
+    }
+  }
+
+  // Edit config wizard methods
+  showEditConfigWizardStep() {
+    const { step, maxSteps } = this.configWizardData;
+    const stepContent = this.getConfigWizardStepContent(step);
+    
+    if (window.app && window.app.modal) {
+      window.app.modal.show(`Edit JSphere Config - Step ${step} of ${maxSteps}`, stepContent.html, {
+        primaryButton: {
+          ...stepContent.primaryButton,
+          text: step === maxSteps ? 'Update Configuration' : stepContent.primaryButton.text,
+          action: step === maxSteps ? 'window.app.configManager.handleUpdateConfig()' : stepContent.primaryButton.action
+        },
+        secondaryButton: step > 1 ? {
+          text: 'Back',
+          action: 'window.app.configManager.handleConfigWizardBack()'
+        } : {
+          text: 'Cancel'
+        }
+      });
+      
+      // Set up event listeners after modal is shown
+      if (step === 1) {
+        this.setupStep1EventListeners();
+      }
+    }
+  }
+
+  async handleUpdateConfig() {
+    try {
+      const configData = {
+        name: this.configWizardData.config.name,
+        workspace_id: this.configWizardData.config.workspace_id,
+        project_namespace: this.configWizardData.config.project_namespace,
+        project_auth_token: this.configWizardData.config.project_auth_token,
+        project_name: this.configWizardData.config.project_name,
+        project_app_config: this.configWizardData.config.project_app_config,
+        project_reference: this.configWizardData.config.project_reference,
+        server_http_port: this.configWizardData.config.server_http_port,
+        server_debug_port: this.configWizardData.config.server_debug_port,
+        project_preview_branch: this.configWizardData.config.project_preview_branch,
+        project_preview_server: this.configWizardData.config.project_preview_server,
+        project_preview_server_auth_token: this.configWizardData.config.project_preview_server_auth_token,
+        custom_variables: this.configWizardData.config.custom_variables
+      };
+
+      await this.api.put(`/configs/${this.configWizardData.editingId}`, configData);
+      
+      // Update the config in local state
+      const configs = this.dataManager.getConfigs();
+      const configIndex = configs.findIndex(c => c.id === this.configWizardData.editingId);
+      if (configIndex !== -1) {
+        configs[configIndex] = { ...configs[configIndex], ...configData };
+        this.dataManager.setConfigs(configs);
+      }
+      
+      utils.showToast('Configuration updated successfully!', 'success');
+      
+      // Hide modal
+      if (window.app && window.app.modal) {
+        window.app.modal.hide();
+      }
+      
+      // Reset wizard data
+      this.configWizardData = {};
+    } catch (error) {
+      utils.showToast('Failed to update configuration: ' + error.message, 'error');
     }
   }
 }

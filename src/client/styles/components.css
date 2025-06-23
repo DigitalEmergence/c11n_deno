@@ -108,7 +108,7 @@
 }
 
 .config-value {
-  color: var(--color-gray-900);
+  /* color: var(--color-gray-900); */
   font-family: 'SFMono-Regular', 'Monaco', 'Consolas', monospace;
   font-size: var(--font-size-sm);
 }
@@ -1687,7 +1687,6 @@
 .config-review h3 {
   font-size: var(--font-size-xl);
   font-weight: 600;
-  color: var(--color-gray-900);
   margin-bottom: var(--spacing-4);
 }
 
@@ -2004,7 +2003,6 @@
   gap: var(--spacing-2);
   font-size: var(--font-size-2xl);
   font-weight: 700;
-  color: var(--color-gray-900);
   margin-bottom: var(--spacing-2);
 }
 
@@ -2013,7 +2011,6 @@
 }
 
 .config-subtitle {
-  color: var(--color-gray-600);
   font-size: var(--font-size-base);
   margin: 0;
 }
@@ -2071,7 +2068,7 @@
 .config-value {
   font-size: var(--font-size-base);
   font-weight: 600;
-  color: var(--color-gray-900);
+  /* color: var(--color-gray-900); */
   font-family: 'SFMono-Regular', 'Monaco', 'Consolas', monospace;
   word-break: break-all;
 }
@@ -2097,7 +2094,7 @@
 
 .variable-name {
   font-weight: 600;
-  color: var(--color-gray-900);
+  color: white;
   font-family: 'SFMono-Regular', 'Monaco', 'Consolas', monospace;
   font-size: var(--font-size-sm);
 }
@@ -2113,7 +2110,7 @@
 
 .variable-value {
   font-size: var(--font-size-sm);
-  color: var(--color-gray-600);
+  color: white;
   font-family: 'SFMono-Regular', 'Monaco', 'Consolas', monospace;
   word-break: break-all;
 }
@@ -2129,7 +2126,6 @@
   font-family: inherit;
   font-size: var(--font-size-base);
   font-weight: 500;
-  color: var(--color-gray-700);
   transition: background-color 0.2s ease;
 }
 

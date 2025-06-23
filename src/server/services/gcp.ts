@@ -1,3 +1,5 @@
+import { decrypt } from "./encryption.ts";
+
 export class GCPService {
   private baseUrl = "https://run.googleapis.com/v1";
   private resourceManagerUrl = "https://cloudresourcemanager.googleapis.com/v1";
@@ -88,6 +90,36 @@ export class GCPService {
         const errorDetails = this.parseAuthError(error);
         throw new Error(`GCP Authentication Error: ${errorDetails.message}. ${errorDetails.suggestion}`);
       } else if (response.status === 403) {
+        // Parse the error to check for API enablement issues
+        let errorDetails;
+        try {
+          errorDetails = JSON.parse(error);
+        } catch {
+          errorDetails = null;
+        }
+        
+        // Check if this is an API not enabled error
+        if (errorDetails?.error?.message?.includes('has not been used') || 
+            errorDetails?.error?.message?.includes('is disabled') ||
+            errorDetails?.error?.details?.some((detail: any) => detail.reason === 'SERVICE_DISABLED')) {
+          
+          const message = errorDetails.error.message;
+          
+          // Extract project ID from the URL or error message
+          let projectId = '';
+          const urlMatch = url.match(/projects\/([^\/]+)/);
+          if (urlMatch) {
+            projectId = urlMatch[1];
+          }
+          
+          // Generate project-specific Cloud Run API enable URL
+          const projectSpecificUrl = projectId ? 
+            `https://console.cloud.google.com/apis/library/run.googleapis.com?project=${projectId}` :
+            'https://console.cloud.google.com/apis/library/run.googleapis.com';
+          
+          throw new Error(`GCP API Not Enabled: ${message} Enable URL: ${projectSpecificUrl} Project: ${projectId}`);
+        }
+        
         throw new Error(`GCP Permission Error: Insufficient permissions. Please ensure your GCP account has the required roles for Cloud Run operations.`);
       } else if (response.status === 404) {
         throw new Error(`GCP Resource Error: The requested resource was not found. Please verify your project ID and region settings.`);
@@ -788,6 +820,36 @@ export class GCPService {
       region: deployment.region
     });
     
+    // Parse custom variables from deployment config if available
+    const customEnvVars: Array<{name: string, value: string}> = [];
+    if (deployment.custom_variables) {
+      try {
+        const parsedCustomVars = typeof deployment.custom_variables === 'string' 
+          ? JSON.parse(deployment.custom_variables) 
+          : deployment.custom_variables;
+        
+        for (const [key, value] of Object.entries(parsedCustomVars)) {
+          if (typeof value === 'string') {
+            // Try to decrypt the value, if it fails, use as-is (for non-encrypted values)
+            try {
+              customEnvVars.push({
+                name: key,
+                value: decrypt(value)
+              });
+            } catch {
+              customEnvVars.push({
+                name: key,
+                value: value
+              });
+            }
+          }
+        }
+        console.log(`🔧 Added ${customEnvVars.length} custom environment variables to deployment`);
+      } catch (error) {
+        console.error('Failed to parse custom variables for deployment:', error);
+      }
+    }
+    
     const serviceConfig = {
       apiVersion: "serving.knative.dev/v1",
       kind: "Service",
@@ -835,7 +897,8 @@ export class GCPService {
                   name: "SERVER_AUTH_TOKEN", 
                   value: deployment.server_auth_token 
                 },
-                ...this.parseEnvironmentVariables(deployment.environment_variables || "")
+                ...this.parseEnvironmentVariables(deployment.environment_variables || ""),
+                ...customEnvVars
               ],
               resources: {
                 limits: {

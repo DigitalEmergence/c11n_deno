@@ -170,18 +170,47 @@ export const utils = {
 
   // Status determination for deployments
   getDeploymentStatus(deployment) {
-    if (!deployment.cloud_run_url && deployment.status === 'creating') {
-      return 'status-deploying';
-    }
-    if (deployment.cloud_run_url && !deployment.config) {
-      return 'status-idle';
-    }
-    if (deployment.cloud_run_url && deployment.config) {
-      return 'status-active';
-    }
+    console.log('🔍 utils.getDeploymentStatus called with deployment:', {
+      id: deployment.id,
+      name: deployment.name,
+      status: deployment.status,
+      cloud_run_url: deployment.cloud_run_url,
+      hasConfig: !!deployment.config,
+      config: deployment.config ? deployment.config.name : 'none'
+    });
+    
+    // Check for error states first
     if (deployment.status === 'error' || deployment.status === 'failed') {
+      console.log('🔍 Returning status-error');
       return 'status-error';
     }
+    
+    // Check if still creating/deploying (no URL yet)
+    if (!deployment.cloud_run_url && deployment.status === 'creating') {
+      console.log('🔍 No URL + creating status - returning status-deploying');
+      return 'status-deploying';
+    }
+    
+    // If no URL at all, consider it deploying
+    if (!deployment.cloud_run_url) {
+      console.log('🔍 No URL - returning status-deploying');
+      return 'status-deploying';
+    }
+    
+    // URL exists - check config status
+    if (deployment.cloud_run_url && deployment.config) {
+      console.log('🔍 URL + Config - returning status-active');
+      return 'status-active';
+    }
+    
+    // URL exists but no config loaded - this is the idle state
+    if (deployment.cloud_run_url && !deployment.config) {
+      console.log('🔍 URL but NO Config - returning status-idle');
+      return 'status-idle';
+    }
+    
+    // Default fallback
+    console.log('🔍 Default fallback - returning status-idle');
     return 'status-idle';
   },
 

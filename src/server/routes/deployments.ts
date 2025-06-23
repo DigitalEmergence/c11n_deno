@@ -307,6 +307,42 @@ deploymentRoutes.post("/api/deployments", async (ctx) => {
       } : undefined
     };
 
+    // Test GCP connection and API availability before proceeding
+    try {
+      const accessToken = decrypt(user.gcp_access_token);
+      
+      // Test if we can access the GCP project and Cloud Run API
+      console.log(`🔍 Testing GCP API access for project: ${body.projectId}`);
+      
+      // Try to list Cloud Run services to test API access
+      await gcp.listCloudRunServices(body.projectId, serviceProfile.region || 'us-central1', accessToken);
+      
+      console.log(`✅ GCP API access confirmed for project: ${body.projectId}`);
+    } catch (gcpError) {
+      console.error(`❌ GCP API test failed:`, gcpError);
+      
+      // Delete the deployment record since we can't deploy
+      await db.run(`
+        MATCH (d:Deployment {id: $deploymentId})
+        DETACH DELETE d
+      `, { deploymentId });
+      
+      // Enhance the error message with project name for better UX
+      let enhancedError = (gcpError as Error).message;
+      if (enhancedError.includes('Project:')) {
+        // Replace project ID with project name in the error message
+        enhancedError = enhancedError.replace(/Project:\s*([a-z0-9-]+)/i, `Project: ${projectName} (${body.projectId})`);
+      }
+      
+      // Return the specific GCP error to the frontend
+      ctx.response.status = 400;
+      ctx.response.body = { 
+        error: enhancedError,
+        gcp_error: true
+      };
+      return;
+    }
+
     // Deploy to GCP asynchronously
     deployToGCP(deploymentId, user);
 
@@ -807,6 +843,29 @@ deploymentRoutes.post("/api/deployments/:id/load-config", async (ctx) => {
 
 // Helper function to send config to Cloud Run instance with detailed logging
 async function sendConfigToInstance(deploymentUrl: string, config: any, authToken: string, deploymentName: string) {
+  // Parse and decrypt custom variables
+  const customVariables: Record<string, string> = {};
+  if (config.custom_variables) {
+    try {
+      const parsedCustomVars = typeof config.custom_variables === 'string' 
+        ? JSON.parse(config.custom_variables) 
+        : config.custom_variables;
+      
+      for (const [key, value] of Object.entries(parsedCustomVars)) {
+        if (typeof value === 'string') {
+          // Try to decrypt the value, if it fails, use as-is (for non-encrypted values)
+          try {
+            customVariables[key] = decrypt(value);
+          } catch {
+            customVariables[key] = value;
+          }
+        }
+      }
+    } catch (error) {
+      console.error('Failed to parse custom variables:', error);
+    }
+  }
+
   const requestPayload = {
     defaultConfiguration: config.name,
     configurations: {
@@ -823,6 +882,8 @@ async function sendConfigToInstance(deploymentUrl: string, config: any, authToke
         PROJECT_PREVIEW_SERVER: config.project_preview_server,
         PROJECT_PREVIEW_SERVER_AUTH_TOKEN: config.project_preview_server_auth_token ? 
           decrypt(config.project_preview_server_auth_token) : null,
+        // Include custom variables
+        ...customVariables
       }
     }
   };
@@ -903,6 +964,7 @@ async function deployToGCP(deploymentId: string, user: any) {
       ...deployment,
       server_auth_token: decryptedServerAuthToken,
       gcp_project_id: deployment.gcp_project_id,
+      custom_variables: config?.custom_variables || null,
     });
 
     console.log(`🚀 Starting deployment for: ${deployment.name} in project: ${deployment.gcp_project_id}`);

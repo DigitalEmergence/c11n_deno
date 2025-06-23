@@ -22,6 +22,17 @@ configRoutes.get("/api/configs", async (ctx) => {
       // Don't expose sensitive tokens
       delete config.project_auth_token;
       delete config.project_preview_server_auth_token;
+      
+      // Parse custom variables if they exist
+      if (config.custom_variables) {
+        try {
+          config.custom_variables = JSON.parse(config.custom_variables);
+        } catch (error) {
+          console.error('Failed to parse custom variables:', error);
+          config.custom_variables = {};
+        }
+      }
+      
       return config;
     });
 
@@ -53,6 +64,16 @@ configRoutes.get("/api/configs/:id", async (ctx) => {
     // Don't expose sensitive tokens in the response
     delete config.project_auth_token;
     delete config.project_preview_server_auth_token;
+
+    // Parse custom variables if they exist
+    if (config.custom_variables) {
+      try {
+        config.custom_variables = JSON.parse(config.custom_variables);
+      } catch (error) {
+        console.error('Failed to parse custom variables:', error);
+        config.custom_variables = {};
+      }
+    }
 
     ctx.response.body = { config };
   } catch (error) {
@@ -153,6 +174,7 @@ configRoutes.post("/api/configs", async (ctx) => {
         project_preview_branch: $project_preview_branch,
         project_preview_server: $project_preview_server,
         project_preview_server_auth_token: $project_preview_server_auth_token,
+        custom_variables: $custom_variables,
         created_at: datetime(),
         updated_at: datetime()
       })
@@ -173,6 +195,7 @@ configRoutes.post("/api/configs", async (ctx) => {
       project_preview_branch: body.project_preview_branch || "",
       project_preview_server: body.project_preview_server || "",
       project_preview_server_auth_token: encryptedPreviewToken,
+      custom_variables: JSON.stringify(customVariables),
     });
 
     // If using workspace, create relationship
@@ -227,6 +250,27 @@ configRoutes.put("/api/configs/:id", async (ctx) => {
     if (body.project_preview_server_auth_token !== undefined) {
       updateFields.project_preview_server_auth_token = body.project_preview_server_auth_token ? 
         encrypt(body.project_preview_server_auth_token) : null;
+    }
+    
+    // Handle custom variables update
+    if (body.custom_variables !== undefined) {
+      const customVariables: Record<string, string> = {};
+      if (body.custom_variables && typeof body.custom_variables === 'object') {
+        for (const [key, varData] of Object.entries(body.custom_variables)) {
+          if (varData && typeof varData === 'object' && 'value' in varData) {
+            const variable = varData as { value: string; secure?: boolean };
+            
+            // Validate variable name format
+            if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(key)) {
+              throw new ValidationError(`Invalid variable name: ${key}. Must start with a letter or underscore, and contain only letters, numbers, and underscores.`, "custom_variables");
+            }
+            
+            // Store variable value, encrypt if marked as secure
+            customVariables[key] = variable.secure ? encrypt(variable.value) : variable.value;
+          }
+        }
+      }
+      updateFields.custom_variables = JSON.stringify(customVariables);
     }
 
     const setClause = Object.keys(updateFields)

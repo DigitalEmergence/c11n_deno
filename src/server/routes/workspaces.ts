@@ -17,12 +17,28 @@ workspaceRoutes.get("/api/workspaces", async (ctx) => {
       ORDER BY w.created_at DESC
     `, { userId });
 
-    const workspaceList = workspaces.map((record: any) => {
+    const workspaceList = await Promise.all(workspaces.map(async (record: any) => {
       const workspace = record.w.properties;
+      const encryptedToken = workspace.project_auth_token;
+      
       // Don't expose sensitive tokens
       delete workspace.project_auth_token;
+      
+      // Get project count for each workspace
+      try {
+        const decryptedToken = decrypt(encryptedToken);
+        const repos = await github.getUserRepos(decryptedToken);
+        const projectRepos = repos.filter((repo: any) => 
+          repo.name.startsWith('.') && repo.owner.login === workspace.project_namespace
+        );
+        workspace.project_count = projectRepos.length;
+      } catch (error) {
+        console.error(`Failed to get project count for workspace ${workspace.id}:`, error);
+        workspace.project_count = 0;
+      }
+      
       return workspace;
-    });
+    }));
 
     ctx.response.body = { workspaces: workspaceList };
   } catch (error) {
@@ -114,7 +130,7 @@ workspaceRoutes.post("/api/workspaces", async (ctx) => {
     const workspaceId = crypto.randomUUID();
     const encryptedToken = encrypt(body.project_auth_token);
 
-    await db.run(`
+    const result = await db.run(`
       MATCH (u:User {github_id: $userId})
       CREATE (w:Workspace {
         id: $workspaceId,
@@ -136,7 +152,24 @@ workspaceRoutes.post("/api/workspaces", async (ctx) => {
       project_auth_token: encryptedToken,
     });
 
-    ctx.response.body = { success: true, workspaceId };
+    // Get the created workspace and remove sensitive data
+    const workspace = result[0].w.properties;
+    delete workspace.project_auth_token;
+
+    // Get project count for the workspace
+    try {
+      const decryptedToken = decrypt(encryptedToken);
+      const repos = await github.getUserRepos(decryptedToken);
+      const projectRepos = repos.filter((repo: any) => 
+        repo.name.startsWith('.') && repo.owner.login === workspace.project_namespace
+      );
+      workspace.project_count = projectRepos.length;
+    } catch (error) {
+      console.error('Failed to get project count:', error);
+      workspace.project_count = 0;
+    }
+
+    ctx.response.body = { success: true, workspaceId, workspace };
   } catch (error) {
     if (error instanceof ValidationError) {
       ctx.response.status = 400;

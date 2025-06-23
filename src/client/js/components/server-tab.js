@@ -65,11 +65,26 @@ export class ServerTabs {
   }
 
   createDeploymentTab(deployment) {
+    console.log('🔍 createDeploymentTab called for deployment:', {
+      id: deployment.id,
+      name: deployment.name,
+      status: deployment.status,
+      cloud_run_url: deployment.cloud_run_url,
+      hasConfig: !!deployment.config
+    });
+    
     const actualStatus = this.getDeploymentStatus(deployment);
     const hasConfig = !!deployment.config;
     const hasUrl = !!deployment.cloud_run_url;
     const statusClass = this.getStatusClass(actualStatus, hasConfig, hasUrl);
     const statusIcon = this.getStatusIcon(actualStatus, hasConfig, hasUrl);
+    
+    console.log('🔍 createDeploymentTab computed values:', {
+      actualStatus,
+      hasConfig,
+      hasUrl,
+      statusClass
+    });
     
     return `
       <div class="server-tab" data-type="deployment" data-id="${deployment.id}">
@@ -330,6 +345,8 @@ export class ServerTabs {
   }
 
   getStatusIcon(status, hasConfig = false, hasUrl = false, isLoadingConfig = false) {
+    console.log('🔍 getStatusIcon called with:', { status, hasConfig, hasUrl, isLoadingConfig });
+    
     // Show spinner for loading states
     if (isLoadingConfig || status === 'loading-config') {
       return '<div class="loading-spinner" title="Loading configuration..."></div>';
@@ -347,34 +364,44 @@ export class ServerTabs {
     if (hasUrl !== undefined) {
       if (!hasUrl) {
         // Still deploying if no URL
+        console.log('🔍 No URL - showing deploying spinner');
         return '<div class="loading-spinner" title="Deploying to Cloud Run..."></div>';
       } else if (hasUrl && hasConfig) {
         // URL exists and config loaded
+        console.log('🔍 URL + Config - showing ACTIVE image');
         return '<img src="/assets/images/jsphere-active.png" alt="Active JSphere" class="jsphere-logo" title="Active with configuration">';
       } else if (hasUrl && !hasConfig) {
         // URL exists but no config
+        console.log('🔍 URL but NO Config - showing IDLE image');
         return '<img src="/assets/images/jsphere-idle.png" alt="Idle JSphere" class="jsphere-logo" title="Ready for configuration">';
       }
     }
     
-    // Legacy status mapping for local servers
+    // Legacy status mapping for local servers and fallback
+    console.log('🔍 Using legacy status mapping for status:', status);
     switch (status) {
       case 'active': 
-        return hasConfig 
+        const activeIcon = hasConfig 
           ? '<img src="/assets/images/jsphere-active.png" alt="Active JSphere" class="jsphere-logo" title="Active with configuration">'
           : '<img src="/assets/images/jsphere-idle.png" alt="Idle JSphere" class="jsphere-logo" title="Ready for configuration">';
+        console.log('🔍 Active status - returning:', activeIcon);
+        return activeIcon;
       case 'idle': 
+        console.log('🔍 Idle status - showing IDLE image');
         return '<img src="/assets/images/jsphere-idle.png" alt="Idle JSphere" class="jsphere-logo" title="Ready for configuration">';
       default: 
+        console.log('🔍 Default status - showing unlinked image');
         return '<img src="/assets/images/jsphere-unlinked.webp" alt="Unlinked JSphere" class="jsphere-logo" title="Not connected">';
     }
   }
 
   // Helper method to determine deployment status using utils
   getDeploymentStatus(deployment) {
-    // Import utils for status determination
-    if (window.utils && window.utils.getServerStatus) {
-      return window.utils.getServerStatus(deployment, 'deployment');
+    // Use utils for status determination
+    if (window.utils && window.utils.getDeploymentStatus) {
+      const status = window.utils.getDeploymentStatus(deployment);
+      // Convert status class to simple status string
+      return status.replace('status-', '');
     }
     
     // Fallback logic if utils not available
@@ -399,9 +426,11 @@ export class ServerTabs {
 
   // Helper method to determine local server status using utils
   getLocalServerStatus(server) {
-    // Import utils for status determination
-    if (window.utils && window.utils.getServerStatus) {
-      return window.utils.getServerStatus(server, 'local');
+    // Use utils for status determination
+    if (window.utils && window.utils.getLocalServerStatus) {
+      const status = window.utils.getLocalServerStatus(server);
+      // Convert status class to simple status string
+      return status.replace('status-', '');
     }
     
     // Fallback logic if utils not available

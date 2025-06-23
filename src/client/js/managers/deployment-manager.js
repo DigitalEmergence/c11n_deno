@@ -55,8 +55,23 @@ export class DeploymentManager {
     } catch (error) {
       console.error('❌ Deployment creation failed:', error);
       
-      // Check for GCP authentication errors in the API response
-      if (this.isGCPAuthError(error)) {
+      // Check if this is a GCP-specific error from the backend
+      if (error.gcp_error || (error.response && error.response.gcp_error)) {
+        console.log('🔧 GCP-specific error detected from backend');
+        
+        // Enhanced error handling for different types of GCP errors
+        if (this.isGCPAPINotEnabledError(error)) {
+          this.handleGCPAPINotEnabledError(error);
+        } else if (this.isGCPAuthError(error)) {
+          console.warn('🔑 GCP authentication error during deployment creation:', error);
+          this.handleGCPAuthError(error);
+        } else {
+          // Generic GCP error - show a helpful message
+          utils.showToast('GCP deployment error: ' + error.message, 'error');
+        }
+      } else if (this.isGCPAPINotEnabledError(error)) {
+        this.handleGCPAPINotEnabledError(error);
+      } else if (this.isGCPAuthError(error)) {
         console.warn('🔑 GCP authentication error during deployment creation:', error);
         this.handleGCPAuthError(error);
         // Do NOT add deployment to data manager when GCP auth fails
@@ -203,8 +218,27 @@ export class DeploymentManager {
       await this.dataManager.loadServiceProfiles();
       const serviceProfiles = this.dataManager.getServiceProfiles();
       
-      if (!serviceProfiles || serviceProfiles.length === 0) {
-        utils.showToast('No service profiles found. Please create one first.', 'warning');
+      console.log('Service profiles loaded:', serviceProfiles);
+      
+      // Filter out any null/undefined profiles and ensure they have required properties
+      const validServiceProfiles = (serviceProfiles || []).filter(profile => {
+        if (!profile) {
+          console.warn('Found null/undefined service profile');
+          return false;
+        }
+        if (!profile.id) {
+          console.warn('Found service profile without id:', profile);
+          return false;
+        }
+        if (!profile.name) {
+          console.warn('Found service profile without name:', profile);
+          return false;
+        }
+        return true;
+      });
+      
+      if (validServiceProfiles.length === 0) {
+        utils.showToast('No valid service profiles found. Please create one first.', 'warning');
         // Trigger service profile management modal
         if (window.app && window.app.serviceProfileManager) {
           window.app.serviceProfileManager.showManageServiceProfilesModal(modal);
@@ -221,7 +255,7 @@ export class DeploymentManager {
         return;
       }
 
-      const configs = this.dataManager.getConfigs();
+      const configs = this.dataManager.getConfigs() || [];
 
       modal.show('Create New Deployment', `
         <form id="deployment-form">
@@ -249,8 +283,8 @@ export class DeploymentManager {
             <label class="form-label">Service Profile *</label>
             <select class="form-select" name="serviceProfileId" required>
               <option value="">Select a service profile...</option>
-              ${serviceProfiles.filter(profile => profile && profile.id).map(profile => 
-                `<option value="${profile.id}">${profile.name} (${profile.container_image_url})</option>`
+              ${validServiceProfiles.map(profile => 
+                `<option value="${profile.id}">${profile.name} (${profile.container_image_url || 'No image'})</option>`
               ).join('')}
             </select>
             <div class="form-help">Service profile defines container image, resources, and deployment settings</div>
@@ -278,7 +312,7 @@ export class DeploymentManager {
       });
     } catch (error) {
       console.error('Failed to load service profiles:', error);
-      utils.showToast('Failed to load service profiles', 'error');
+      utils.showToast('Failed to load service profiles: ' + error.message, 'error');
     }
   }
 
@@ -438,6 +472,100 @@ export class DeploymentManager {
     }
     
     return false;
+  }
+
+  // Check if error is a GCP API not enabled error
+  isGCPAPINotEnabledError(error) {
+    if (!error || !error.message) return false;
+    
+    const message = error.message.toLowerCase();
+    return message.includes('gcp api not enabled') || 
+           message.includes('has not been used') || 
+           message.includes('is disabled') ||
+           message.includes('enable it by visiting');
+  }
+
+  // Handle GCP API not enabled errors
+  handleGCPAPINotEnabledError(error) {
+    console.warn('🔧 GCP API not enabled error detected:', error.message);
+    
+    // Extract the project-specific activation URL and project info from the backend error
+    const enableUrlMatch = error.message.match(/Enable URL:\s*(https:\/\/[^\s]+)/);
+    const projectMatch = error.message.match(/Project:\s*([^()]+)(?:\s*\(([^)]+)\))?/i);
+    
+    const activationUrl = enableUrlMatch ? enableUrlMatch[1] : null;
+    let projectName = 'your project';
+    let projectId = '';
+    
+    if (projectMatch) {
+      const fullMatch = projectMatch[1].trim();
+      const projectIdMatch = projectMatch[2];
+      
+      if (projectIdMatch) {
+        // Format: "Project Name (project-id)"
+        projectName = fullMatch;
+        projectId = projectIdMatch;
+      } else {
+        // Format: "project-id" only
+        projectName = fullMatch;
+        projectId = fullMatch;
+      }
+    }
+    
+    // Show detailed modal with instructions
+    if (window.app && window.app.modal) {
+      window.app.modal.show('GCP API Not Enabled', `
+        <div class="api-error-container">
+          <div class="error-icon">⚠️</div>
+          <h3>Cloud Run API Not Enabled</h3>
+          <p>The Cloud Run Admin API needs to be enabled for project <strong>${projectName}</strong> before you can deploy.</p>
+          
+          <div class="error-details">
+            <h4>What you need to do:</h4>
+            <ol>
+              <li>Click the "Enable API" button below to open the Google Cloud Console</li>
+              <li>Sign in with your Google account if prompted</li>
+              <li>Click the "Enable" button on the API page</li>
+              <li>Wait a few minutes for the API to be activated</li>
+              <li>Return here and try deploying again</li>
+            </ol>
+          </div>
+          
+          ${activationUrl ? `
+            <div class="action-buttons">
+              <a href="${activationUrl}" target="_blank" class="btn btn-primary">
+                🚀 Enable Cloud Run API for ${projectName}
+              </a>
+            </div>
+          ` : `
+            <div class="action-buttons">
+              <a href="https://console.cloud.google.com/apis/library/run.googleapis.com?project=${projectId}" target="_blank" class="btn btn-primary">
+                🚀 Enable Cloud Run API for ${projectName}
+              </a>
+            </div>
+          `}
+          
+          <div class="error-note">
+            <strong>Note:</strong> If you just enabled the API, please wait a few minutes for the changes to take effect before trying again.
+          </div>
+        </div>
+      `, {
+        primaryButton: {
+          text: 'I\'ve Enabled the API',
+          action: 'window.app.modal.hide()'
+        },
+        secondaryButton: {
+          text: 'Cancel'
+        }
+      });
+    }
+    
+    // Also show a persistent toast message
+    utils.showToast(
+      'Cloud Run API needs to be enabled. Check the modal for instructions.', 
+      'error',
+      10000
+    );
   }
 
   // Handle GCP authentication errors
