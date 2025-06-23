@@ -110,7 +110,7 @@ export class ConfigManager {
 
     modal.show('Manage Workspaces', `
       <div class="workspace-list">
-        ${workspaces && workspaces.length > 0 ? workspaces.map(workspace => `
+        ${workspaces && workspaces.length > 0 ? workspaces.filter(workspace => workspace && workspace.id).map(workspace => `
           <div class="workspace-item">
             <div class="workspace-info">
               <div class="workspace-name">${workspace.name}</div>
@@ -380,12 +380,12 @@ export class ConfigManager {
           <div id="workspace-selection" class="form-group" style="display: ${this.configWizardData.config.workspace_id ? 'block' : 'none'}">
             <label class="form-label">Select Workspace *</label>
             <div class="workspace-cards">
-              ${workspaces.length > 0 ? workspaces.map(workspace => `
+              ${workspaces.length > 0 ? workspaces.filter(workspace => workspace && workspace.id).map(workspace => `
                 <div class="workspace-card ${workspace.id === this.configWizardData.config.workspace_id ? 'selected' : ''}" 
                      onclick="window.app.configManager.selectWorkspace('${workspace.id}')">
                   <div class="workspace-card-header">
                     <div class="workspace-avatar">
-                      <img src="${workspace.avatar_url || '/assets/icons/logo.svg'}" alt="${workspace.name}" class="workspace-avatar-img">
+                      <img src="https://github.com/${workspace.project_namespace}.png" alt="${workspace.name}" class="workspace-avatar-img">
                     </div>
                     <div class="workspace-info">
                       <div class="workspace-name">${workspace.name}</div>
@@ -937,7 +937,7 @@ export class ConfigManager {
       
       // Load GitHub projects for this workspace using the workspace-specific endpoint
       try {
-        const response = await this.api.get(`/configs/workspace/${workspace.id}/projects`);
+        const response = await this.api.get(`/workspaces/${workspace.id}/github/projects`);
         this.configWizardData.validation.projects = response.projects || [];
       } catch (error) {
         console.error('Failed to load workspace projects:', error);
@@ -1009,7 +1009,7 @@ export class ConfigManager {
       let response;
       if (workspace_id) {
         // Use workspace-specific endpoint
-        response = await this.api.get(`/configs/workspace/${workspace_id}/projects`);
+        response = await this.api.get(`/workspaces/${workspace_id}/github/projects`);
       } else {
         // Use manual credentials endpoint
         response = await this.api.get(`/configs/github/projects?namespace=${project_namespace}&token=${project_auth_token}`);
@@ -1031,7 +1031,7 @@ export class ConfigManager {
       let response;
       if (workspace_id) {
         // Use workspace-specific endpoint
-        response = await this.api.get(`/configs/workspace/${workspace_id}/app-configs?project=${project_name}`);
+        response = await this.api.get(`/workspaces/${workspace_id}/github/app-configs?project=${project_name}`);
       } else {
         // Use manual credentials endpoint
         response = await this.api.get(`/configs/github/app-configs?namespace=${project_namespace}&project=${project_name}&token=${project_auth_token}`);
@@ -1053,7 +1053,7 @@ export class ConfigManager {
       let response;
       if (workspace_id) {
         // Use workspace-specific endpoint
-        response = await this.api.get(`/configs/workspace/${workspace_id}/references?project=${project_name}`);
+        response = await this.api.get(`/workspaces/${workspace_id}/github/references?project=${project_name}`);
       } else {
         // Use manual credentials endpoint
         response = await this.api.get(`/configs/github/references?namespace=${project_namespace}&project=${project_name}&token=${project_auth_token}`);
@@ -1363,9 +1363,8 @@ export class ConfigManager {
   buildFinalConfig() {
     const { config } = this.configWizardData;
     
-    // Remove the leading period from project name for the final config
-    const projectName = config.project_name.startsWith('.') ? 
-      config.project_name.substring(1) : config.project_name;
+    // Keep the project name as-is (including the leading period if present)
+    const projectName = config.project_name;
     
     // Build the configuration object in the required format
     const finalConfig = {

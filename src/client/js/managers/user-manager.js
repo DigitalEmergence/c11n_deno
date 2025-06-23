@@ -199,9 +199,9 @@ export class UserManager {
 
   async startUpgrade() {
     try {
-      const response = await this.api.post('/billing/create-checkout-session');
-      if (response.url) {
-        window.location.href = response.url;
+      const response = await this.api.post('/billing/checkout');
+      if (response.checkout_url) {
+        window.location.href = response.checkout_url;
       }
     } catch (error) {
       console.error('Failed to start upgrade:', error);

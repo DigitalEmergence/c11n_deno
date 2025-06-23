@@ -119,7 +119,7 @@
 
 .form-help {
   font-size: var(--font-size-xs);
-  color: #c7c7c7;
+  /* color: #c7c7c7; */
   margin-top: var(--spacing-1);
 }
 
@@ -273,7 +273,7 @@
 
 .step-indicator {
   font-size: var(--font-size-sm);
-  color: var(--color-gray-600);
+  /* color: var(--color-gray-600); */
   text-align: center;
 }
 
@@ -303,10 +303,10 @@
 }
 
 .config-summary {
-  background: var(--color-gray-50);
+  /* background: var(--color-gray-50); */
   padding: var(--spacing-4);
-  border-radius: var(--radius-md);
-  border: 1px solid var(--color-gray-200);
+  /* border-radius: var(--radius-md); */
+  /* border: 1px solid var(--color-gray-200); */
 }
 
 .summary-item {
@@ -336,23 +336,6 @@
   margin-bottom: var(--spacing-4);
 }
 
-.collapsible-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: var(--spacing-3) var(--spacing-4);
-  background: var(--color-gray-50);
-  border: 1px solid var(--color-gray-200);
-  border-radius: var(--radius-md);
-  cursor: pointer;
-  transition: all 0.2s ease;
-  user-select: none;
-}
-
-.collapsible-header:hover {
-  background: var(--color-gray-100);
-  border-color: var(--color-gray-300);
-}
 
 .collapsible-title {
   font-weight: 500;
@@ -361,7 +344,7 @@
 
 .collapsible-arrow {
   font-size: var(--font-size-sm);
-  color: var(--color-gray-500);
+  color: white;
   transition: transform 0.2s ease;
 }
 
@@ -371,7 +354,6 @@
   border: 1px solid var(--color-gray-200);
   border-top: none;
   border-radius: 0 0 var(--radius-md) var(--radius-md);
-  background: white;
 }
 
 /* Environment variables styles */
@@ -456,13 +438,15 @@
 
 .service-profile-item {
   display: flex;
+  gap: 1rem;
   align-items: center;
   justify-content: space-between;
   padding: var(--spacing-4);
   border: 1px solid var(--color-gray-200);
-  border-radius: var(--radius-md);
-  background: white;
+  /* border-radius: var(--radius-md); */
+  /* background: white; */
   transition: all 0.2s ease;
+  flex-direction: column;
 }
 
 .service-profile-item:hover {
@@ -476,13 +460,13 @@
 
 .service-profile-name {
   font-weight: 600;
-  color: var(--color-gray-900);
+  /* color: var(--color-gray-900); */
   margin-bottom: var(--spacing-1);
 }
 
 .service-profile-description {
   font-size: var(--font-size-sm);
-  color: var(--color-gray-600);
+  /* color: var(--color-gray-600); */
   margin-bottom: var(--spacing-2);
   font-family: monospace;
 }
@@ -495,16 +479,17 @@
 
 .profile-detail {
   font-size: var(--font-size-xs);
-  background: var(--color-gray-100);
-  color: var(--color-gray-700);
-  padding: 2px 6px;
-  border-radius: var(--radius-sm);
+  /* background: var(--color-gray-100); */
+  /* color: var(--color-gray-700); */
+  /* padding: 2px 6px; */
+  /* border-radius: var(--radius-sm); */
 }
 
 .service-profile-actions {
   display: flex;
   gap: var(--spacing-2);
   flex-shrink: 0;
+  color: white;
 }
 
 /* Environment Variables Styles */

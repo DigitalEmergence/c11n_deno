@@ -412,7 +412,7 @@ workspaceRoutes.get("/api/workspaces/:id/github/app-configs", async (ctx) => {
     const workspace = workspaces[0].w.properties;
     const decryptedToken = decrypt(workspace.project_auth_token);
 
-    const appConfigs = await github.scanAppConfigs(workspace.project_namespace, `.${project}`, decryptedToken);
+    const appConfigs = await github.scanAppConfigs(workspace.project_namespace, project, decryptedToken);
     ctx.response.body = { appConfigs };
   } catch (error) {
     ctx.response.status = 500;
@@ -449,8 +449,8 @@ workspaceRoutes.get("/api/workspaces/:id/github/references", async (ctx) => {
     const decryptedToken = decrypt(workspace.project_auth_token);
 
     const [branches, tags] = await Promise.all([
-      github.getRepoBranches(workspace.project_namespace, `.${project}`, decryptedToken),
-      github.getRepoTags(workspace.project_namespace, `.${project}`, decryptedToken)
+      github.getRepoBranches(workspace.project_namespace, project, decryptedToken),
+      github.getRepoTags(workspace.project_namespace, project, decryptedToken)
     ]);
 
     ctx.response.body = { 

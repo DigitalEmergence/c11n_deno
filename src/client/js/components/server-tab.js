@@ -40,13 +40,13 @@ export class ServerTabs {
     const statusIcon = this.getStatusIcon(actualStatus, hasConfig);
     
     return `
-      <div class="server-tab" data-type="local" data-id="${server.id}">
+      <div class="server-tab-local" data-type="local" data-id="${server.id}">
         <div class="server-tab-header" onclick="window.app.toggleServerInfo('${server.id}')">
           <div class="server-tab-actions">
-            <button class="btn btn-icon btn-error delete-server-btn" 
+            <button class="btn btn-error delete-server-btn" 
                     onclick="event.stopPropagation(); window.app.deleteLocalServer('${server.id}')" 
                     title="Unlink local server">
-              🗑️
+              <img src="/assets/images/jsphere-error.png" alt="Error JSphere" class="jsphere-logo">
             </button>
           </div>
           <div class="server-tab-info">
@@ -75,10 +75,10 @@ export class ServerTabs {
       <div class="server-tab" data-type="deployment" data-id="${deployment.id}">
         <div class="server-tab-header" onclick="window.app.toggleServerInfo('${deployment.id}')">
           <div class="server-tab-actions">
-            <button class="btn btn-icon btn-error delete-server-btn" 
+            <button class="btn-error delete-server-btn" 
                     onclick="event.stopPropagation(); window.app.deleteDeployment('${deployment.id}')" 
                     title="Delete deployment">
-              🗑️
+              <img src="/assets/icons/c11n_cancel_icon.png" alt="Cancel Server" class="jsphere-logo">
             </button>
           </div>
           <div class="server-tab-info">
@@ -90,7 +90,7 @@ export class ServerTabs {
             </div>
             <div class="server-tab-description">
               ${deployment.config ? `${deployment.config.project_name} - ${deployment.config.project_app_config}` : 'No application loaded'}
-              ${deployment.gcp_project_name ? `<br><small class="gcp-project-info">📍 GCP Project: ${deployment.gcp_project_name}</small>` : ''}
+              ${deployment.gcp_project_name ? `<br><small class="gcp-project-info">GCP Project: ${deployment.gcp_project_name}</small>` : ''}
             </div>
           </div>
           <div class="server-status-icon ${statusClass}">${statusIcon}</div>
@@ -366,7 +366,7 @@ export class ServerTabs {
       case 'idle': 
         return '<img src="/assets/images/jsphere-idle.png" alt="Idle JSphere" class="jsphere-logo" title="Ready for configuration">';
       default: 
-        return '<img src="/assets/images/jsphere-unlinked.png" alt="Unlinked JSphere" class="jsphere-logo" title="Not connected">';
+        return '<img src="/assets/images/jsphere-unlinked.webp" alt="Unlinked JSphere" class="jsphere-logo" title="Not connected">';
     }
   }
 
