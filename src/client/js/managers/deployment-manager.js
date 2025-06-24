@@ -76,7 +76,11 @@ export class DeploymentManager {
         this.handleGCPAuthError(error);
         // Do NOT add deployment to data manager when GCP auth fails
       } else {
-        utils.showToast('Failed to create deployment: ' + error.message, 'error');
+        // Use enhanced GCP error handling
+        const errorResult = await this.gcpManager.handleGCPOperationError(error, 'Deployment creation');
+        if (!errorResult.handled) {
+          utils.showToast('Failed to create deployment: ' + error.message, 'error');
+        }
       }
       throw error;
     }
@@ -276,10 +280,11 @@ export class DeploymentManager {
             <select class="form-select" name="projectId" required>
               <option value="">Select a GCP project...</option>
               ${gcpProjects.map(project => {
+                if (!project || !project.projectId) return '';
                 const user = this.dataManager.getUser();
                 const isDefault = user?.gcp_project_id === project.projectId;
-                return `<option value="${project.projectId}" ${isDefault ? 'selected' : ''}>${project.name} (${project.projectId})${isDefault ? ' - Default' : ''}</option>`;
-              }).join('')}
+                return `<option value="${project.projectId}" ${isDefault ? 'selected' : ''}>${project.name || project.projectId} (${project.projectId})${isDefault ? ' - Default' : ''}</option>`;
+              }).filter(option => option !== '').join('')}
             </select>
             <div class="form-help">Choose which GCP project to deploy to. Your default project is pre-selected.</div>
           </div>

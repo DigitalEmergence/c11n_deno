@@ -185,16 +185,25 @@ export class DataManager {
       const projects = response.projects || [];
       console.log(`✅ Loaded ${projects.length} GCP projects`);
       this.setGCPProjects(projects);
+      
+      // Mark token as valid since the API call succeeded
+      this.setGCPTokenValidity(true, 'successful_api_call');
+      
       return this.gcpProjects;
     } catch (error) {
       console.error('❌ Failed to load GCP projects:', error);
       this.setGCPProjects([]);
+      
+      // Check if this is a token-related error and handle accordingly
+      await this.handleGCPError(error);
       
       // Provide more specific error information
       if (error.message?.includes('403') || error.message?.includes('Insufficient permissions')) {
         throw new Error('Insufficient permissions to list GCP projects. Please reconnect your GCP account.');
       } else if (error.message?.includes('401') || error.message?.includes('unauthorized')) {
         throw new Error('GCP authentication expired. Please reconnect your GCP account.');
+      } else if (error.message?.includes('reconnect')) {
+        throw new Error('GCP token expired. Please reconnect your GCP account.');
       } else {
         throw new Error(`Failed to load GCP projects: ${error.message}`);
       }
@@ -414,6 +423,76 @@ export class DataManager {
         reason,
         message: valid ? 'Token is valid' : 'Token is invalid or expired'
       });
+    }
+  }
+
+  // Handle GCP-related errors and update token validity accordingly
+  async handleGCPError(error) {
+    console.log('🔍 Analyzing GCP error for token validity:', error.message);
+    
+    // Check if the error indicates token issues
+    const tokenErrorIndicators = [
+      'reconnect',
+      'invalid_grant',
+      'invalid_rapt',
+      'token expired',
+      'authentication expired',
+      'unauthorized',
+      '401'
+    ];
+    
+    const isTokenError = tokenErrorIndicators.some(indicator => 
+      error.message?.toLowerCase().includes(indicator.toLowerCase())
+    );
+    
+    if (isTokenError) {
+      console.log('🔄 Detected token-related error, marking token as invalid');
+      this.setGCPTokenValidity(false, 'api_error_detected');
+      
+      // Also refresh user data to get the latest state from server
+      try {
+        const { Auth } = await import('../auth.js');
+        const auth = new Auth(this.api);
+        const user = await auth.getCurrentUser();
+        this.setUser(user);
+        console.log('✅ User data refreshed after token error');
+      } catch (refreshError) {
+        console.error('❌ Failed to refresh user data after token error:', refreshError);
+      }
+    }
+  }
+
+  // Proactive GCP token validation - can be called periodically
+  async performGCPHealthCheck() {
+    if (!this.isGCPConnected) {
+      return { healthy: true, reason: 'not_connected' };
+    }
+
+    try {
+      console.log('🏥 Performing GCP health check...');
+      const validation = await this.validateGCPToken();
+      
+      if (!validation.valid) {
+        console.log('⚠️ GCP health check failed - token invalid');
+        return { 
+          healthy: false, 
+          reason: validation.reason,
+          message: validation.message,
+          action: 'reconnect_required'
+        };
+      }
+      
+      console.log('✅ GCP health check passed');
+      return { healthy: true, reason: 'token_valid' };
+    } catch (error) {
+      console.error('❌ GCP health check error:', error);
+      this.setGCPTokenValidity(false, 'health_check_failed');
+      return { 
+        healthy: false, 
+        reason: 'health_check_error',
+        message: error.message,
+        action: 'reconnect_required'
+      };
     }
   }
 }

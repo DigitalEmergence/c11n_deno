@@ -2272,3 +2272,132 @@
     font-size: var(--font-size-sm);
   }
 }
+
+/* GCP Reconnection UI Styles */
+.gcp-reconnect-btn {
+  background: linear-gradient(135deg, #f59e0b, #d97706) !important;
+  border: none !important;
+  color: white !important;
+  font-weight: 600 !important;
+  animation: pulse-warning 2s infinite;
+  box-shadow: 0 2px 8px rgba(245, 158, 11, 0.3);
+}
+
+.gcp-reconnect-btn:hover {
+  background: linear-gradient(135deg, #d97706, #b45309) !important;
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(245, 158, 11, 0.4);
+}
+
+.gcp-connected-btn {
+  background: linear-gradient(135deg, #10b981, #059669) !important;
+  border: none !important;
+  color: white !important;
+  font-weight: 600 !important;
+  box-shadow: 0 2px 8px rgba(16, 185, 129, 0.3);
+}
+
+.gcp-connected-btn:hover {
+  background: linear-gradient(135deg, #059669, #047857) !important;
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(16, 185, 129, 0.4);
+}
+
+@keyframes pulse-warning {
+  0%, 100% {
+    box-shadow: 0 2px 8px rgba(245, 158, 11, 0.3);
+  }
+  50% {
+    box-shadow: 0 2px 8px rgba(245, 158, 11, 0.6), 0 0 0 4px rgba(245, 158, 11, 0.1);
+  }
+}
+
+/* Reconnection prompt styles */
+.reconnect-prompt {
+  max-width: 500px;
+  margin: 0 auto;
+}
+
+.warning-header {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  margin-bottom: 1.5rem;
+  padding-bottom: 1rem;
+  border-bottom: 1px solid rgba(245, 158, 11, 0.2);
+}
+
+.warning-header i {
+  font-size: 2rem;
+  color: #f59e0b;
+}
+
+.warning-header h3 {
+  margin: 0;
+  color: white;
+  font-size: 1.5rem;
+  font-weight: 600;
+}
+
+.reconnect-content {
+  color: #e5e7eb;
+  line-height: 1.6;
+}
+
+.reconnect-info,
+.reconnect-action {
+  margin: 1.5rem 0;
+  padding: 1rem;
+  background: rgba(245, 158, 11, 0.1);
+  border-radius: 8px;
+  border-left: 4px solid #f59e0b;
+}
+
+.reconnect-info h4,
+.reconnect-action h4 {
+  margin: 0 0 0.75rem 0;
+  color: white;
+  font-size: 1.1rem;
+  font-weight: 600;
+}
+
+.reason-list,
+.action-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.reason-list li,
+.action-list li {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin-bottom: 0.5rem;
+  color: #d1d5db;
+}
+
+.reason-list li i,
+.action-list li i {
+  color: #f59e0b;
+  width: 16px;
+  text-align: center;
+}
+
+.security-note {
+  margin-top: 1.5rem;
+  padding: 1rem;
+  background: rgba(59, 130, 246, 0.1);
+  border-radius: 8px;
+  border-left: 4px solid #3b82f6;
+}
+
+.security-note i {
+  color: #3b82f6;
+  margin-right: 0.5rem;
+}
+
+.security-note p {
+  margin: 0;
+  color: #d1d5db;
+}

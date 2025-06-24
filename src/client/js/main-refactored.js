@@ -220,7 +220,7 @@ class C11NApp {
       `;
     } else if (needsReconnection) {
       gcpButtonHtml = `
-        <button class="btn btn-warning" onclick="window.app.reconnectGCP()" title="GCP token expired - click to reconnect">
+        <button class="btn btn-warning gcp-reconnect-btn" onclick="window.app.reconnectGCP()" title="GCP session expired - click to reconnect">
           ⚠️ Reconnect GCP
         </button>
         <div class="gcp-dropdown">
@@ -237,7 +237,7 @@ class C11NApp {
     } else {
       const currentProject = user?.gcp_project_name || 'Unknown Project';
       gcpButtonHtml = `
-        <button class="btn btn-success" onclick="window.app.showGCPInfo()" title="Connected to ${currentProject}">
+        <button class="btn btn-success gcp-connected-btn" onclick="window.app.showGCPInfo()" title="Connected to ${currentProject}">
           ✓ GCP Connected
         </button>
         <div class="gcp-dropdown">

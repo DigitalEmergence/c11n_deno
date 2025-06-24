@@ -469,11 +469,102 @@ export class GCPManager {
     
     // Check if GCP token is expired/invalid
     if (this.dataManager.needsGCPReconnection()) {
-      utils.showToast('Your GCP session has expired. Please click "Reconnect GCP" to continue.', 'warning');
+      this.showReconnectionPrompt('Your GCP session has expired and needs to be renewed to continue with deployments.');
       return false;
     }
     
     return true;
+  }
+
+  // Show a user-friendly reconnection prompt
+  showReconnectionPrompt(message = 'Your GCP session has expired. Please reconnect to continue.') {
+    if (window.app && window.app.modal) {
+      const reconnectHTML = `
+        <div class="reconnect-prompt">
+          <div class="warning-header">
+            <i class="fas fa-exclamation-triangle text-warning"></i>
+            <h3>GCP Session Expired</h3>
+          </div>
+          
+          <div class="reconnect-content">
+            <p>${message}</p>
+            
+            <div class="reconnect-info">
+              <h4>Why did this happen?</h4>
+              <ul class="reason-list">
+                <li><i class="fas fa-clock"></i> Your Google authentication token has expired</li>
+                <li><i class="fas fa-shield-alt"></i> Google requires periodic re-authentication for security</li>
+                <li><i class="fas fa-sync-alt"></i> Token refresh failed due to authentication changes</li>
+              </ul>
+            </div>
+            
+            <div class="reconnect-action">
+              <h4>What happens next?</h4>
+              <p>Clicking "Reconnect Now" will:</p>
+              <ul class="action-list">
+                <li><i class="fas fa-link"></i> Open Google's secure authentication page</li>
+                <li><i class="fas fa-key"></i> Generate a new access token</li>
+                <li><i class="fas fa-check"></i> Restore full GCP functionality</li>
+              </ul>
+            </div>
+            
+            <div class="security-note">
+              <i class="fas fa-info-circle"></i>
+              <p><strong>Note:</strong> Your existing deployments will continue running. This only affects management operations.</p>
+            </div>
+          </div>
+        </div>
+      `;
+      
+      window.app.modal.show('GCP Reconnection Required', reconnectHTML, {
+        primaryButton: {
+          text: 'Reconnect Now',
+          action: 'window.app.gcpManager.reconnectGCP()'
+        },
+        secondaryButton: {
+          text: 'Later'
+        }
+      });
+    } else {
+      // Fallback toast message
+      utils.showToast(message + ' Please click "Reconnect GCP" to continue.', 'warning');
+    }
+  }
+
+  // Enhanced error handling for GCP operations
+  async handleGCPOperationError(error, operation = 'GCP operation') {
+    console.error(`❌ ${operation} failed:`, error);
+    
+    // Check if this is a token-related error
+    const tokenErrorIndicators = [
+      'reconnect',
+      'invalid_grant',
+      'invalid_rapt',
+      'token expired',
+      'authentication expired',
+      'unauthorized',
+      '401'
+    ];
+    
+    const isTokenError = tokenErrorIndicators.some(indicator => 
+      error.message?.toLowerCase().includes(indicator.toLowerCase())
+    );
+    
+    if (isTokenError) {
+      console.log('🔄 Detected token error, updating state and prompting reconnection');
+      
+      // Update token validity in data manager
+      this.dataManager.setGCPTokenValidity(false, 'operation_error');
+      
+      // Show reconnection prompt
+      this.showReconnectionPrompt(`${operation} failed due to an expired GCP session.`);
+      
+      return { tokenError: true, handled: true };
+    }
+    
+    // For non-token errors, show generic error message
+    utils.showToast(`${operation} failed: ${error.message}`, 'error');
+    return { tokenError: false, handled: true };
   }
 
 

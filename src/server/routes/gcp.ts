@@ -582,15 +582,61 @@ async function getValidAccessToken(user: any): Promise<string> {
         console.log("✅ GCP access token refreshed successfully");
         return access_token;
       } else {
-        const error = await refreshResponse.text();
-        console.error("❌ Failed to refresh GCP token:", error);
-        throw new Error("Failed to refresh access token. Please reconnect your GCP account.");
+        const errorResponse = await refreshResponse.json();
+        console.error("❌ Failed to refresh GCP token:", errorResponse);
+        
+        // Check for specific errors that indicate the user needs to re-authenticate
+        const authErrors = ['invalid_grant', 'invalid_request', 'unauthorized_client'];
+        const reAuthErrors = ['invalid_rapt', 'reauth_required'];
+        
+        if (authErrors.includes(errorResponse.error) || 
+            reAuthErrors.some(err => errorResponse.error_description?.includes(err))) {
+          
+          console.log("🔄 Token refresh failed due to authentication issue, clearing tokens...");
+          
+          // Clear the invalid tokens from the database
+          await clearInvalidGCPTokens(user.gcp_access_token);
+          
+          throw new Error("Failed to refresh access token. Please reconnect your GCP account.");
+        }
+        
+        throw new Error(`Token refresh failed: ${errorResponse.error_description || errorResponse.error}`);
       }
     } catch (error) {
       console.error("❌ Error refreshing GCP token:", error);
+      
+      // If it's a network error or parsing error, also clear tokens as they're likely invalid
+      if (error instanceof Error && error.message.includes('Failed to refresh access token')) {
+        throw error; // Re-throw the specific error message
+      }
+      
+      // For other errors, clear tokens and throw a generic message
+      await clearInvalidGCPTokens(user.gcp_access_token);
       throw new Error("Token refresh failed. Please reconnect your GCP account.");
     }
   }
 
   return accessToken;
+}
+
+// Helper function to clear invalid GCP tokens from database
+async function clearInvalidGCPTokens(currentAccessToken: string): Promise<void> {
+  try {
+    console.log("🧹 Clearing invalid GCP tokens from database...");
+    
+    await db.run(`
+      MATCH (u:User {gcp_access_token: $accessToken})
+      SET u.gcp_access_token = null,
+          u.gcp_refresh_token = null,
+          u.gcp_token_expires_at = null,
+          u.updated_at = datetime()
+      RETURN u
+    `, {
+      accessToken: currentAccessToken
+    });
+    
+    console.log("✅ Invalid GCP tokens cleared from database");
+  } catch (error) {
+    console.error("❌ Failed to clear invalid GCP tokens:", error);
+  }
 }
