@@ -197,9 +197,15 @@ export const utils = {
       return 'status-deploying';
     }
     
-    // URL exists - check config status
-    if (deployment.cloud_run_url && deployment.config) {
-      console.log('🔍 URL + Config - returning status-active');
+    // If server explicitly says it's idle, respect that regardless of config state
+    if (deployment.status === 'idle') {
+      console.log('🔍 Server status is idle - returning status-idle');
+      return 'status-idle';
+    }
+    
+    // URL exists - check config status for other cases
+    if (deployment.cloud_run_url && deployment.config && deployment.status !== 'idle') {
+      console.log('🔍 URL + Config + not idle status - returning status-active');
       return 'status-active';
     }
     
@@ -209,26 +215,86 @@ export const utils = {
       return 'status-idle';
     }
     
-    // Default fallback
+    // Default fallback - if we have a URL but unclear config state, assume idle
     console.log('🔍 Default fallback - returning status-idle');
     return 'status-idle';
   },
 
   // Status determination for local servers
   getLocalServerStatus(server) {
+    console.log('🔍 utils.getLocalServerStatus called with server:', {
+      id: server.id,
+      status: server.status,
+      is_healthy: server.is_healthy,
+      hasConfig: !!server.config,
+      port: server.port
+    });
+    
     // If server is being health checked initially
     if (server.status === 'connecting') {
+      console.log('🔍 Server connecting - returning status-connecting');
       return 'status-connecting';
     }
-    // If server is not healthy (can't connect)
-    if (server.is_healthy === false || server.status === 'error') {
+    
+    // If server explicitly has error status
+    if (server.status === 'error') {
+      console.log('🔍 Server error status - returning status-error');
       return 'status-error';
     }
+    
     // If server is healthy and has config loaded
-    if (server.config && server.is_healthy !== false) {
+    if (server.config && server.status !== 'error') {
+      console.log('🔍 Server has config and not error - returning status-active');
       return 'status-active';
     }
-    // If server is healthy but no config loaded
+    
+    // If server is healthy but no config loaded, or explicitly idle
+    if (server.status === 'idle' || (!server.config && server.status !== 'error')) {
+      console.log('🔍 Server idle or no config - returning status-idle');
+      return 'status-idle';
+    }
+    
+    // Default fallback
+    console.log('🔍 Default fallback - returning status-idle');
+    return 'status-idle';
+  },
+
+  // Status determination for remote servers (same logic as local servers)
+  getRemoteServerStatus(server) {
+    console.log('🔍 utils.getRemoteServerStatus called with server:', {
+      id: server.id,
+      status: server.status,
+      is_healthy: server.is_healthy,
+      hasConfig: !!server.config,
+      url: server.url
+    });
+    
+    // If server is being health checked initially
+    if (server.status === 'connecting') {
+      console.log('🔍 Remote server connecting - returning status-connecting');
+      return 'status-connecting';
+    }
+    
+    // If server explicitly has error status
+    if (server.status === 'error') {
+      console.log('🔍 Remote server error status - returning status-error');
+      return 'status-error';
+    }
+    
+    // If server is healthy and has config loaded
+    if (server.config && server.status !== 'error') {
+      console.log('🔍 Remote server has config and not error - returning status-active');
+      return 'status-active';
+    }
+    
+    // If server is healthy but no config loaded, or explicitly idle
+    if (server.status === 'idle' || (!server.config && server.status !== 'error')) {
+      console.log('🔍 Remote server idle or no config - returning status-idle');
+      return 'status-idle';
+    }
+    
+    // Default fallback
+    console.log('🔍 Remote server default fallback - returning status-idle');
     return 'status-idle';
   },
 

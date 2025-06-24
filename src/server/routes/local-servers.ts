@@ -17,7 +17,7 @@ localServerRoutes.get("/api/local-servers", async (ctx) => {
       ORDER BY s.created_at DESC
     `, { userId });
 
-    const serverList = servers.map(record => {
+    const serverList = servers.map((record: any) => {
       const server = record.s.properties;
       const config = record.c?.properties;
       
@@ -51,39 +51,75 @@ localServerRoutes.post("/api/local-servers", async (ctx) => {
       throw new ValidationError("Invalid port number", "port");
     }
 
-    // Check if local server is actually running
+    // Check if any HTTP server is running on the port
+    let serverType = 'unknown';
+    let isJSphere = false;
+    let connectionError = null;
+    
     try {
-      console.log(`🔍 Checking if JSphere server is running on port ${port}...`);
-      const healthCheck = await fetch(`http://localhost:${port}/health`, {
-        method: 'GET',
-        signal: AbortSignal.timeout(5000), // 5 second timeout
-      });
+      console.log(`🔍 Checking if HTTP server is running on port ${port}...`);
       
-      console.log(`📡 Health check response for port ${port}: ${healthCheck.status} ${healthCheck.statusText}`);
-      
-      if (!healthCheck.ok) {
-        console.warn(`⚠️ Health check failed for port ${port}: ${healthCheck.status}`);
-        throw new Error("Health check failed");
+      // First try JSphere health endpoint
+      try {
+        const jsphereHealthCheck = await fetch(`http://localhost:${port}/health`, {
+          method: 'GET',
+          signal: AbortSignal.timeout(3000), // 3 second timeout
+        });
+        
+        if (jsphereHealthCheck.ok) {
+          const contentType = jsphereHealthCheck.headers.get('content-type') || '';
+          if (contentType.includes('application/json')) {
+            const healthData = await jsphereHealthCheck.json();
+            console.log(`✅ JSphere server detected on port ${port}:`, healthData);
+            serverType = 'jsphere';
+            isJSphere = true;
+          } else {
+            console.log(`📡 HTTP server on port ${port} responded to /health but not JSphere format`);
+            connectionError = "Server responded but does not appear to be a JSphere instance";
+          }
+        } else {
+          connectionError = `Server responded with status ${jsphereHealthCheck.status}`;
+        }
+      } catch (jsphereError) {
+        console.log(`📡 /health endpoint not available on port ${port}, trying root path...`);
+        
+        // If not JSphere, try root path to see if any HTTP server is running
+        try {
+          const rootCheck = await fetch(`http://localhost:${port}/`, {
+            method: 'GET',
+            signal: AbortSignal.timeout(3000), // 3 second timeout
+          });
+          
+          console.log(`📡 Root path response for port ${port}: ${rootCheck.status} ${rootCheck.statusText}`);
+          
+          if (rootCheck.ok) {
+            const contentType = rootCheck.headers.get('content-type') || '';
+            
+            if (contentType.includes('text/html')) {
+              serverType = 'html';
+              console.log(`✅ HTML server detected on port ${port}`);
+            } else if (contentType.includes('application/json')) {
+              serverType = 'json';
+              console.log(`✅ JSON API server detected on port ${port}`);
+            } else {
+              serverType = 'other';
+              console.log(`✅ HTTP server detected on port ${port} (${contentType})`);
+            }
+          } else {
+            connectionError = `HTTP server returned ${rootCheck.status}`;
+          }
+        } catch (rootError) {
+          connectionError = `Cannot connect to server: ${(rootError as Error).message}`;
+        }
       }
       
-      // Try to parse as JSON, but handle HTML responses gracefully
-      const contentType = healthCheck.headers.get('content-type') || '';
-      if (contentType.includes('application/json')) {
-        const healthData = await healthCheck.json();
-        console.log(`✅ JSphere server on port ${port} is healthy:`, healthData);
-      } else {
-        const responseText = await healthCheck.text();
-        console.warn(`⚠️ Port ${port} returned non-JSON response (${contentType}):`, responseText.substring(0, 100));
-        throw new Error("Port is not running JSphere (returned HTML instead of JSON)");
-      }
     } catch (error) {
-      console.error(`❌ Cannot connect to JSphere server on port ${port}:`, error.message);
-      ctx.response.status = 400;
-      ctx.response.body = { 
-        error: `Cannot connect to JSphere server on port ${port}. ${error.message.includes('JSON') ? 'Port appears to be running a web server instead of JSphere.' : 'Make sure JSphere is running.'}` 
-      };
-      return;
+      console.error(`❌ Cannot connect to HTTP server on port ${port}:`, (error as Error).message);
+      connectionError = `Cannot connect to server: ${(error as Error).message}`;
     }
+
+    // We'll create the server entry regardless of connection status
+    // This allows users to add servers that may be temporarily down
 
     const serverId = crypto.randomUUID();
     console.log(`🆔 Generated server ID: ${serverId} for port ${port}`);
@@ -110,34 +146,49 @@ localServerRoutes.post("/api/local-servers", async (ctx) => {
     const server = result[0].s.properties;
     console.log(`✅ Local server record created:`, server);
 
-    // Perform initial health check
-    let healthStatus = "idle";
-    try {
-      console.log(`🔍 Performing secondary health check for server ${serverId}...`);
-      const healthCheck = await fetch(`http://localhost:${port}/health`, {
-        method: 'GET',
-        signal: AbortSignal.timeout(3000), // 3 second timeout for initial check
-      });
-      
-      console.log(`📡 Secondary health check response: ${healthCheck.status} ${healthCheck.statusText}`);
-      healthStatus = healthCheck.ok ? "idle" : "error";
-      
-      if (healthCheck.ok) {
-        const healthData = await healthCheck.json();
-        console.log(`✅ Secondary health check data:`, healthData);
+    // Set status based on connection and JSphere detection
+    let finalStatus = "idle";
+    if (connectionError) {
+      finalStatus = "unlinked";
+      console.log(`⚠️ Setting server status to 'unlinked' due to connection error: ${connectionError}`);
+    } else if (isJSphere) {
+      // For JSphere servers, do a more thorough health check
+      try {
+        console.log(`🔍 Performing JSphere health check for server ${serverId}...`);
+        const healthCheck = await fetch(`http://localhost:${port}/health`, {
+          method: 'GET',
+          signal: AbortSignal.timeout(3000), // 3 second timeout for initial check
+        });
+        
+        console.log(`📡 JSphere health check response: ${healthCheck.status} ${healthCheck.statusText}`);
+        
+        if (healthCheck.ok) {
+          const healthData = await healthCheck.json();
+          console.log(`✅ JSphere health check data:`, healthData);
+          finalStatus = "idle"; // JSphere server is ready for config
+        } else {
+          finalStatus = "error";
+        }
+      } catch (error) {
+        finalStatus = "error";
+        console.error(`❌ JSphere health check failed for server ${serverId}:`, (error as Error).message);
       }
-    } catch (error) {
-      healthStatus = "error";
-      console.error(`❌ Secondary health check failed for server ${serverId}:`, error.message);
+    } else if (serverType !== 'unknown') {
+      // For non-JSphere servers, we already confirmed they respond to HTTP
+      console.log(`✅ Non-JSphere HTTP server linked successfully on port ${port} (${serverType})`);
+      finalStatus = "idle"; // Ready for potential config loading
+    } else {
+      finalStatus = "unlinked";
+      console.log(`⚠️ Setting server status to 'unlinked' - no server detected`);
     }
 
-    // Update server status based on health check
-    console.log(`📝 Updating server status to: ${healthStatus}`);
+    // Update server status based on health check and connection
+    console.log(`📝 Updating server status to: ${finalStatus}`);
     await db.run(`
       MATCH (s:LocalServer {id: $serverId})
-      SET s.status = $status, s.last_ping = datetime()
+      SET s.status = $status, s.last_ping = datetime(), s.is_healthy = $isHealthy
       RETURN s
-    `, { serverId, status: healthStatus });
+    `, { serverId, status: finalStatus, isHealthy: !connectionError && (isJSphere || serverType !== 'unknown') });
 
     // Send config if provided
     let config = null;
@@ -160,14 +211,14 @@ localServerRoutes.post("/api/local-servers", async (ctx) => {
           console.log(`✅ Config loaded and retrieved for response:`, { name: config.name, project_name: config.project_name });
         }
       } catch (error) {
-        console.error(`❌ Failed to load config to local server ${serverId}:`, error.message);
+        console.error(`❌ Failed to load config to local server ${serverId}:`, (error as Error).message);
       }
     }
 
     // Return complete server object
     const localServer = {
       ...server,
-      status: healthStatus,
+      status: finalStatus,
       url: `http://localhost:${port}`,
       config: config
     };
@@ -319,7 +370,7 @@ localServerRoutes.get("/api/local-servers/:id/health", async (ctx) => {
       }
     } catch (error) {
       isHealthy = false;
-      healthError = error.message;
+      healthError = (error as Error).message;
     }
 
     // Update server health status in database
@@ -480,7 +531,7 @@ localServerRoutes.get("/api/local-servers/:id/packages", async (ctx) => {
     const appConfig = JSON.parse(appConfigContent);
 
     // Get package status from JSphere server
-    let packageStatuses = {};
+    let packageStatuses: { [key: string]: string } = {};
     try {
       const statusResponse = await fetch(`http://localhost:${server.port}/@cmd/status`, {
         method: 'POST',

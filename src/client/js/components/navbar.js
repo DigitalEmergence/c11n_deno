@@ -18,7 +18,7 @@ export class Navbar {
     navbar.innerHTML = `
       <div class="navbar">
         <div class="section_content">
-          <a href="/" class="navbar-logo">C11N</a>
+          <h1 class="navbar-logo">C11N</h1>
           <div class="navbar-actions">
             ${this.user ? this.renderUserSection() : ''}
           </div>

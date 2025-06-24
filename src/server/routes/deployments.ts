@@ -222,24 +222,30 @@ deploymentRoutes.post("/api/deployments", async (ctx) => {
       region: serviceProfile.region
     });
 
-    // Check deployment limits based on plan
-    const deploymentCount = await db.run(`
-      MATCH (u:User {github_id: $userId})-[:OWNS]->(d:Deployment)
-      WHERE d.status IN ["active", "idle", "creating"]
-      RETURN count(d) as count
-    `, { userId });
+    // Check deployment limits based on plan (with bypass option for testing)
+    const bypassLimit = Deno.env.get("BYPASS_FREE_PLAN_LIMIT") === "true";
+    
+    if (bypassLimit) {
+      console.log(`🔓 BYPASS_FREE_PLAN_LIMIT is enabled - skipping deployment limit check for user: ${user.github_username || userId}`);
+    } else {
+      const deploymentCount = await db.run(`
+        MATCH (u:User {github_id: $userId})-[:OWNS]->(d:Deployment)
+        WHERE d.status IN ["active", "idle", "creating"]
+        RETURN count(d) as count
+      `, { userId });
 
-    const currentDeployments = deploymentCount[0]?.count || 0;
-    const deploymentLimit = user.plan === "developer" ? 10 : 1;
+      const currentDeployments = deploymentCount[0]?.count || 0;
+      const deploymentLimit = user.plan === "developer" ? 10 : 1;
 
-    if (currentDeployments >= deploymentLimit) {
-      ctx.response.status = 400;
-      ctx.response.body = { 
-        error: `Deployment limit reached. ${user.plan === "developer" ? "Developer" : "Free"} plan allows ${deploymentLimit} deployment${deploymentLimit > 1 ? "s" : ""}.`,
-        limit_reached: true,
-        current_plan: user.plan || "free"
-      };
-      return;
+      if (currentDeployments >= deploymentLimit) {
+        ctx.response.status = 400;
+        ctx.response.body = { 
+          error: `Deployment limit reached. ${user.plan === "developer" ? "Developer" : "Free"} plan allows ${deploymentLimit} deployment${deploymentLimit > 1 ? "s" : ""}.`,
+          limit_reached: true,
+          current_plan: user.plan || "free"
+        };
+        return;
+      }
     }
 
     const deploymentId = crypto.randomUUID();

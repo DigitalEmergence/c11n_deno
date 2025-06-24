@@ -2,6 +2,15 @@ export class Modal {
   constructor() {
     this.overlay = document.getElementById('modal-overlay');
     this.content = document.getElementById('modal-content');
+    
+    if (!this.overlay || !this.content) {
+      console.error('Modal elements not found in DOM:', {
+        overlay: !!this.overlay,
+        content: !!this.content
+      });
+      return;
+    }
+    
     this.setupEventListeners();
   }
 
@@ -20,6 +29,11 @@ export class Modal {
   }
 
   show(title, body, options = {}) {
+    if (!this.overlay || !this.content) {
+      console.error('Cannot show modal: modal elements not found');
+      return;
+    }
+
     this.content.innerHTML = `
       <div class="modal-header">
         <h2 class="modal-title">${title}</h2>
@@ -44,6 +58,11 @@ export class Modal {
   }
 
   hide() {
+    if (!this.overlay) {
+      console.error('Cannot hide modal: overlay element not found');
+      return;
+    }
+    
     this.overlay.classList.remove('visible');
     this.overlay.classList.add('hidden');
   }

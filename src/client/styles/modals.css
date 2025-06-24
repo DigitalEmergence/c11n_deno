@@ -21,7 +21,7 @@
 
 /* Modal content */
 .modal-content {
-  background: linear-gradient(90deg, rgba(218, 207, 224, 0.55), rgba(110, 130, 155, 0.55));
+  background: linear-gradient(90deg, rgba(131, 124, 134), rgba(58, 68, 82));
   /* border-radius: var(--radius-xl); */
   max-width: 500px;
   width: 90%;
@@ -101,13 +101,22 @@
   transition: border-color 0.2s ease, box-shadow 0.2s ease;
 }
 
+.form-select {
+  max-width: 100%;
+  box-sizing: border-box;
+}
+
 /* Dropdown option styles */
 .form-select option {
   background: rgb(0, 0, 0);
   color: white;
-  width: 100px;
-  overflow-x: hidden;
-  margin: 10px;
+  padding: 8px 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  width: 100%;
+  max-width: inherit;
+  box-sizing: border-box;
 }
 
 .form-input:focus,

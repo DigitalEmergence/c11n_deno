@@ -48,15 +48,23 @@ billingRoutes.get("/api/billing", async (ctx) => {
       }
     }
 
+    // Check if deployment limits are bypassed for testing (server-side only)
+    const bypassLimit = Deno.env.get("BYPASS_FREE_PLAN_LIMIT") === "true";
+    const effectiveLimit = bypassLimit ? 10 : (user.plan === "developer" ? 10 : 1);
+
+    if (bypassLimit) {
+      console.log(`🔓 BYPASS_FREE_PLAN_LIMIT is active - allowing unlimited deployments for user: ${user.github_username || userId}`);
+    }
+
     const billing = {
       plan: user.plan || "free",
       stripe_customer_id: user.stripe_customer_id,
       deployments_count: deploymentCount[0]?.count || 0,
-      deployments_limit: user.plan === "developer" ? 10 : 1,
+      deployments_limit: effectiveLimit,
       subscription: subscriptionInfo,
       plan_limits: {
         free: {
-          deployments: 1,
+          deployments: bypassLimit ? 10 : 1,
           features: ["1 cloud deployment", "Unlimited local servers", "Unlimited JSphere configs", "Community support"]
         },
         developer: {

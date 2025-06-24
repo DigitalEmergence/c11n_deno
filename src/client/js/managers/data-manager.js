@@ -4,6 +4,7 @@ export class DataManager {
     this.deployments = [];
     this.configs = [];
     this.localServers = [];
+    this.remoteServers = [];
     this.workspaces = [];
     this.serviceProfiles = [];
     this.gcpProjects = [];
@@ -44,6 +45,10 @@ export class DataManager {
 
   getLocalServers() {
     return this.localServers;
+  }
+
+  getRemoteServers() {
+    return this.remoteServers;
   }
 
   getWorkspaces() {
@@ -96,6 +101,11 @@ export class DataManager {
     this.notifyListeners('local_servers_updated', localServers);
   }
 
+  setRemoteServers(remoteServers) {
+    this.remoteServers = remoteServers;
+    this.notifyListeners('remote_servers_updated', remoteServers);
+  }
+
   setWorkspaces(workspaces) {
     this.workspaces = workspaces;
     this.notifyListeners('workspaces_updated', workspaces);
@@ -118,6 +128,7 @@ export class DataManager {
         this.api.get('/deployments'),
         this.api.get('/configs'),
         this.api.get('/local-servers'),
+        this.api.get('/remote-servers'),
         this.api.get('/workspaces')
       ];
 
@@ -126,12 +137,14 @@ export class DataManager {
       this.setDeployments(results[0].deployments || []);
       this.setConfigs(results[1].configs || []);
       this.setLocalServers(results[2].localServers || []);
-      this.setWorkspaces(results[3].workspaces || []);
+      this.setRemoteServers(results[3].remoteServers || []);
+      this.setWorkspaces(results[4].workspaces || []);
 
       this.notifyListeners('data_loaded', {
         deployments: this.deployments,
         configs: this.configs,
         localServers: this.localServers,
+        remoteServers: this.remoteServers,
         workspaces: this.workspaces
       });
 
@@ -267,6 +280,35 @@ export class DataManager {
       const removed = this.localServers.splice(index, 1)[0];
       this.notifyListeners('local_server_removed', removed);
     }
+  }
+
+  // Add new remote server
+  addRemoteServer(server) {
+    this.remoteServers.push(server);
+    this.notifyListeners('remote_server_added', server);
+  }
+
+  // Remove remote server
+  removeRemoteServer(serverId) {
+    const index = this.remoteServers.findIndex(s => s.id === serverId);
+    if (index !== -1) {
+      const removed = this.remoteServers.splice(index, 1)[0];
+      this.notifyListeners('remote_server_removed', removed);
+    }
+  }
+
+  // Update individual remote server
+  updateRemoteServer(serverId, updates) {
+    const server = this.remoteServers.find(s => s.id === serverId);
+    if (server) {
+      Object.assign(server, updates);
+      this.notifyListeners('remote_server_updated', { serverId, server, updates });
+    }
+  }
+
+  // Get remote server by ID
+  getRemoteServerById(serverId) {
+    return this.remoteServers.find(s => s.id === serverId);
   }
 
   // Add new config

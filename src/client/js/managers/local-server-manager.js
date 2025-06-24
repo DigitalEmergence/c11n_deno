@@ -30,11 +30,15 @@ export class LocalServerManager {
       this.dataManager.addLocalServer(response.localServer);
       console.log('✅ Local server added to data manager successfully');
       
-      // Show appropriate message based on server status
-      if (response.localServer.status === 'error') {
-        utils.showToast('Local server linked but connection failed. Check if JSphere is running.', 'warning');
+      // Show appropriate message based on server status and config
+      if (response.localServer.status === 'unlinked') {
+        utils.showToast('Server added but could not connect. Please check the port and ensure a server is running.', 'warning');
+      } else if (response.localServer.status === 'error') {
+        utils.showToast('Server linked but has connection issues. Check server status.', 'warning');
+      } else if (response.localServer.config) {
+        utils.showToast('Server linked and configuration loaded successfully!', 'success');
       } else {
-        utils.showToast('Local server linked successfully', 'success');
+        utils.showToast('Server linked successfully. Ready for configuration.', 'success');
       }
       
       return response.localServer;
@@ -168,6 +172,34 @@ export class LocalServerManager {
   }
 
   // Modal Methods
+  showServerTypeSelectionModal(modal) {
+    const modalBody = `
+      <p>Choose the type of server you want to link:</p>
+      
+      <div class="server-type-options">
+        <div class="server-type-option" onclick="window.app.showLinkLocalServerModal()">
+          <div class="server-type-icon">🖥️</div>
+          <div class="server-type-content">
+            <h3>Local Server</h3>
+            <p>Link a JSphere instance running on your local machine</p>
+            <small>Typically used for development and testing</small>
+          </div>
+        </div>
+        
+        <div class="server-type-option" onclick="window.app.showLinkRemoteServerModal()">
+          <div class="server-type-icon">🌐</div>
+          <div class="server-type-content">
+            <h3>Remote Server</h3>
+            <p>Link a JSphere instance deployed on external hosting platforms</p>
+            <small>Heroku, DigitalOcean, AWS, or other hosting providers</small>
+          </div>
+        </div>
+      </div>
+    `;
+    
+    modal.show('Link a Server', modalBody);
+  }
+
   showLinkLocalServerModal(modal) {
     const configs = this.dataManager.getConfigs();
 

@@ -13,9 +13,11 @@ import { RealtimeManager } from './managers/realtime-manager.js';
 import { GCPManager } from './managers/gcp-manager.js';
 import { DeploymentManager } from './managers/deployment-manager.js';
 import { LocalServerManager } from './managers/local-server-manager.js';
+import { RemoteServerManager } from './managers/remote-server-manager.js';
 import { UserManager } from './managers/user-manager.js';
 import { ConfigManager } from './managers/config-manager.js';
 import { ServiceProfileManager } from './managers/service-profile-manager.js';
+import { ActionsManager } from './managers/actions-manager.js';
 
 class C11NApp {
   constructor() {
@@ -32,9 +34,11 @@ class C11NApp {
     this.gcpManager = new GCPManager(this.api, this.dataManager);
     this.deploymentManager = new DeploymentManager(this.api, this.dataManager, this.gcpManager, this.realtimeManager);
     this.localServerManager = new LocalServerManager(this.api, this.dataManager);
+    this.remoteServerManager = new RemoteServerManager(this);
     this.userManager = new UserManager(this.api, this.dataManager);
     this.configManager = new ConfigManager(this.api, this.dataManager);
     this.serviceProfileManager = new ServiceProfileManager(this.api, this.dataManager);
+    this.actionsManager = new ActionsManager(this.api, this.dataManager);
     
     // UI components
     this.navbar = null;
@@ -57,26 +61,32 @@ class C11NApp {
           break;
         case 'deployments_updated':
         case 'local_servers_updated':
+        case 'remote_servers_updated':
         case 'deployment_added':
         case 'deployment_removed':
         case 'local_server_added':
         case 'local_server_removed':
+        case 'remote_server_added':
+        case 'remote_server_removed':
           if (this.serverTabs) {
             this.serverTabs.update(
               this.dataManager.getDeployments(), 
-              this.dataManager.getLocalServers()
+              this.dataManager.getLocalServers(),
+              this.dataManager.getRemoteServers()
             );
           }
           break;
         case 'deployment_updated':
         case 'deployment_url_updated':
         case 'local_server_updated':
+        case 'remote_server_updated':
           // Force a complete re-render for individual updates to ensure UI reflects changes
           if (this.serverTabs) {
             console.log(`🔄 Updating server tabs due to ${eventType}:`, data);
             this.serverTabs.update(
               this.dataManager.getDeployments(), 
-              this.dataManager.getLocalServers()
+              this.dataManager.getLocalServers(),
+              this.dataManager.getRemoteServers()
             );
             // Force re-render by creating a new instance if needed
             this.serverTabs.render();
@@ -271,7 +281,8 @@ class C11NApp {
     this.navbar = new Navbar(user);
     this.serverTabs = new ServerTabs(
       this.dataManager.getDeployments(), 
-      this.dataManager.getLocalServers()
+      this.dataManager.getLocalServers(),
+      this.dataManager.getRemoteServers()
     );
   }
 
@@ -297,7 +308,7 @@ class C11NApp {
   showUniversalMenu(event) {
     const menuItems = [
       { label: 'New Deployment', action: 'window.app.showNewDeploymentModal' },
-      { label: 'Link Local Server', action: 'window.app.showLinkLocalServerModal' },
+      { label: 'Link a Server', action: 'window.app.showLinkServerModal' },
       { label: 'Manage Configs', action: 'window.app.showManageConfigsModal' },
       { label: 'Manage Workspaces', action: 'window.app.showManageWorkspacesModal' },
       { label: 'Manage Service Profiles', action: 'window.app.showManageServiceProfilesModal' }
@@ -316,6 +327,17 @@ class C11NApp {
         plusIcon.classList.remove('rotated');
       }
     });
+  }
+
+  // Delegate to LocalServerManager for server linking coordination
+  showLinkServerModal() {
+    this.localServerManager.showServerTypeSelectionModal(this.modal);
+  }
+
+  // Delegate to respective managers
+  showLinkRemoteServerModal() {
+    this.modal.hide(); // Close the server type selection modal first
+    this.remoteServerManager.showLinkRemoteServerModal(this.modal);
   }
 
   // Service profile management
@@ -714,6 +736,10 @@ class C11NApp {
     await this.localServerManager.deleteLocalServer(id);
   }
 
+  async deleteRemoteServer(id) {
+    await this.remoteServerManager.deleteRemoteServer(id);
+  }
+
   // Server configuration methods
   async changeConfig(serverId) {
     this.localServerManager.showChangeConfigModal(serverId, this.modal);
@@ -894,11 +920,59 @@ class C11NApp {
     await this.gcpManager.selectGCPProject(this.modal);
   }
 
+  // Actions Tab Methods - Delegate to ActionsManager
+  toggleActionDetails(actionId) {
+    return this.actionsManager.toggleActionDetails(actionId);
+  }
+
+  async loadConfigsForAction(serverId) {
+    return await this.actionsManager.loadConfigsForAction(serverId);
+  }
+
+  handleConfigSelection(serverId) {
+    return this.actionsManager.handleConfigSelection(serverId);
+  }
+
+  buildJSphereConfig(config) {
+    return this.actionsManager.buildJSphereConfig(config);
+  }
+
+  async refreshConfigs(serverId) {
+    return await this.actionsManager.refreshConfigs(serverId);
+  }
+
+  async executeLoadConfig(serverId) {
+    return await this.actionsManager.executeLoadConfig(serverId);
+  }
+
+  async executeCheckout(serverId) {
+    return await this.actionsManager.executeCheckout(serverId);
+  }
+
+  async executeCreatePackage(serverId) {
+    return await this.actionsManager.executeCreatePackage(serverId);
+  }
+
+  async executeCreateProject(serverId) {
+    return await this.actionsManager.executeCreateProject(serverId);
+  }
+
+  async executePreview(serverId) {
+    return await this.actionsManager.executePreview(serverId);
+  }
+
+  async sendJSphereCommand(serverId, command, data = null) {
+    return await this.actionsManager.sendJSphereCommand(serverId, command, data);
+  }
+
   // Cleanup method
   cleanup() {
     this.realtimeManager.cleanup();
   }
 }
+
+// Make utils available globally
+window.utils = utils;
 
 // Initialize app
 console.log('🚀 Initializing C11NApp...');

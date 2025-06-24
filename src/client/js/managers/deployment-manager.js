@@ -183,7 +183,7 @@ export class DeploymentManager {
     }
   }
 
-  showNewDeploymentModal(modal) {
+  async showNewDeploymentModal(modal) {
     console.log('showNewDeploymentModal called');
     
     // Validate GCP connection
@@ -191,22 +191,27 @@ export class DeploymentManager {
       return;
     }
 
-    // Check deployment limits for free users
-    const user = this.dataManager.getUser();
-    if (user.plan === 'free') {
+    // Check deployment limits using billing info (which includes bypass logic)
+    try {
+      const billingResponse = await this.api.get('/billing');
+      const billing = billingResponse.billing;
+      
       const deployments = this.dataManager.getDeployments();
       const activeDeployments = deployments.filter(d => 
         d.status === 'active' || d.status === 'idle' || d.status === 'creating'
       ).length;
       
-      if (activeDeployments >= 1) {
-        utils.showToast('Free plan allows 1 deployment. Upgrade for more!', 'warning');
+      if (activeDeployments >= billing.deployments_limit) {
+        utils.showToast(`Deployment limit reached. ${billing.plan === "developer" ? "Developer" : "Free"} plan allows ${billing.deployments_limit} deployment${billing.deployments_limit > 1 ? "s" : ""}.`, 'warning');
         // Trigger plan management modal
         if (window.app && window.app.userManager) {
           window.app.userManager.showManagePlan(modal);
         }
         return;
       }
+    } catch (error) {
+      console.error('Failed to check billing limits:', error);
+      // Continue with deployment creation if billing check fails
     }
 
     // Load service profiles and show modal
