@@ -59,7 +59,7 @@ export class ActionsManager {
     }
   }
 
-  handleConfigSelection(serverId) {
+  async handleConfigSelection(serverId) {
     const selectElement = document.getElementById(`config-select-${serverId}`);
     const previewElement = document.getElementById(`config-preview-${serverId}`);
     const previewJsonElement = document.getElementById(`config-preview-json-${serverId}`);
@@ -70,15 +70,29 @@ export class ActionsManager {
     const configId = selectElement.value;
     
     if (configId) {
-      const config = this.dataManager.getConfigs().find(c => c.id === configId);
-      if (config) {
+      try {
+        // Fetch config with decrypted tokens for JSphere use
+        console.log(`Fetching JSphere config for ID: ${configId}`);
+        const response = await this.api.get(`/configs/${configId}/jsphere`);
+        const config = response.config;
+        
+        console.log('Received config from JSphere endpoint:', config);
+        console.log('Config project_auth_token:', config.project_auth_token ? '[PRESENT]' : '[MISSING]');
+        
         // Build the JSphere config JSON
         const jsphereConfig = this.buildJSphereConfig(config);
+        
+        console.log('Built JSphere config:', jsphereConfig);
         
         // Show preview
         previewJsonElement.textContent = JSON.stringify(jsphereConfig, null, 2);
         previewElement.classList.remove('hidden');
         loadButton.disabled = false;
+      } catch (error) {
+        console.error('Failed to fetch config for JSphere:', error);
+        previewJsonElement.textContent = 'Error loading configuration';
+        previewElement.classList.remove('hidden');
+        loadButton.disabled = true;
       }
     } else {
       previewElement.classList.add('hidden');
@@ -87,32 +101,30 @@ export class ActionsManager {
   }
 
   buildJSphereConfig(config) {
-    // Build the JSphere configuration format similar to config manager
+    // Clean project name - remove leading period if present
+    const cleanProjectName = config.project_name && config.project_name.startsWith('.') ? 
+      config.project_name.substring(1) : config.project_name;
+
+    // Build the JSphere configuration in the new flat format
     const jsphereConfig = {
-      defaultConfiguration: {
-        name: config.name,
-        disableCaching: true
-      },
-      configurations: {
-        [config.name]: {
-          PROJECT_HOST: "GitHub",
-          PROJECT_NAMESPACE: config.project_namespace,
-          PROJECT_NAME: config.project_name,
-          PROJECT_APP_CONFIG: config.project_app_config,
-          PROJECT_REFERENCE: config.project_reference || "",
-          SERVER_HTTP_PORT: config.server_http_port || "80",
-          SERVER_DEBUG_PORT: config.server_debug_port || "9229",
-          PROJECT_PREVIEW_BRANCH: config.project_preview_branch || "",
-          PROJECT_PREVIEW_SERVER: config.project_preview_server || "",
-          PROJECT_PREVIEW_SERVER_AUTH_TOKEN: config.project_preview_server_auth_token || ""
-        }
-      }
+      PROJECT_CONFIG_NAME: config.name,
+      PROJECT_HOST: "GitHub",
+      PROJECT_NAMESPACE: config.project_namespace,
+      PROJECT_NAME: cleanProjectName,
+      PROJECT_AUTH_TOKEN: config.project_auth_token || "",
+      PROJECT_APP_CONFIG: config.project_app_config,
+      PROJECT_REFERENCE: config.project_reference || "",
+      SERVER_HTTP_PORT: config.server_http_port || "80",
+      SERVER_DEBUG_PORT: config.server_debug_port || "9229",
+      PROJECT_PREVIEW_BRANCH: config.project_preview_branch || "",
+      PROJECT_PREVIEW_SERVER: config.project_preview_server || "",
+      PROJECT_PREVIEW_SERVER_AUTH_TOKEN: config.project_preview_server_auth_token || ""
     };
 
     // Add custom variables if they exist
     if (config.custom_variables) {
-      for (const [name, varData] of Object.entries(config.custom_variables)) {
-        jsphereConfig.configurations[config.name][name] = varData.value;
+      for (const [name, value] of Object.entries(config.custom_variables)) {
+        jsphereConfig[name] = value;
       }
     }
 
@@ -137,24 +149,30 @@ export class ActionsManager {
       return;
     }
 
-    const config = this.dataManager.getConfigs().find(c => c.id === configId);
-    if (!config) {
-      utils.showToast('Configuration not found', 'error');
-      return;
-    }
-
     loadButton.disabled = true;
     loadButton.textContent = 'Loading...';
 
     try {
+      // Fetch config with decrypted tokens for JSphere use
+      console.log(`Loading config for execution, ID: ${configId}`);
+      const response = await this.api.get(`/configs/${configId}/jsphere`);
+      const config = response.config;
+      
+      console.log('Config for execution:', config);
+      console.log('Config project_auth_token for execution:', config.project_auth_token ? '[PRESENT]' : '[MISSING]');
+      
       const jsphereConfig = this.buildJSphereConfig(config);
+      
+      console.log('=== FINAL JSPHERE CONFIG BEING SENT TO SERVER ===');
+      console.log(JSON.stringify(jsphereConfig, null, 2));
+      console.log('=== END JSPHERE CONFIG ===');
+      
       await this.sendJSphereCommand(serverId, 'loadconfig', jsphereConfig);
       
       utils.showToast('Configuration loaded successfully', 'success');
       
       // Refresh server data to show the loaded config
-      await this.dataManager.loadLocalServers();
-      await this.dataManager.loadDeployments();
+      await this.dataManager.loadData();
       
     } catch (error) {
       console.error('Failed to load configuration:', error);
@@ -252,57 +270,23 @@ export class ActionsManager {
   }
 
   async sendJSphereCommand(serverId, command, data = null) {
-    // Find the server (local or deployment)
-    const localServer = this.dataManager.getLocalServers().find(s => s.id === serverId);
-    const deployment = this.dataManager.getDeployments().find(d => d.id === serverId);
-    
-    if (!localServer && !deployment) {
-      throw new Error('Server not found');
-    }
-
-    const isDeployment = !!deployment;
-    const serverUrl = isDeployment ? deployment.cloud_run_url : localServer.url;
-    
-    if (!serverUrl) {
-      throw new Error('Server URL not available');
-    }
-
-    // Build the command URL
-    const commandUrl = `${serverUrl}/@cmd/${command}`;
-    
-    // Prepare headers
-    const headers = {
-      'Content-Type': 'application/json'
+    // Use the local proxy endpoint to avoid CORS issues
+    const requestPayload = {
+      serverId,
+      command,
+      data
     };
 
-    // Add auth token for deployments
-    if (isDeployment) {
-      // For deployments, we need the SERVER_AUTH_TOKEN
-      // This should be available from the deployment configuration
-      const authToken = deployment.server_auth_token || process.env.SERVER_AUTH_TOKEN;
-      if (authToken) {
-        headers['Authorization'] = `token ${authToken}`;
-      }
+    console.log(`Sending JSphere command via proxy: ${command} for server: ${serverId}`);
+    console.log('Request payload:', requestPayload);
+
+    try {
+      const response = await this.api.post('/jsphere-commands', requestPayload);
+      console.log(`JSphere command successful: ${command}`);
+      return response;
+    } catch (error) {
+      console.error(`JSphere command failed: ${command}`, error);
+      throw error;
     }
-
-    // Prepare request options
-    const requestOptions = {
-      method: data ? 'POST' : 'GET',
-      headers
-    };
-
-    if (data) {
-      requestOptions.body = JSON.stringify(data);
-    }
-
-    // Send the command
-    const response = await fetch(commandUrl, requestOptions);
-    
-    if (!response.ok) {
-      const errorText = await response.text();
-      throw new Error(`HTTP ${response.status}: ${errorText}`);
-    }
-
-    return await response.json();
   }
 }

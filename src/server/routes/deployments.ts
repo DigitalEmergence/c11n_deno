@@ -873,25 +873,21 @@ async function sendConfigToInstance(deploymentUrl: string, config: any, authToke
   }
 
   const requestPayload = {
-    defaultConfiguration: config.name,
-    configurations: {
-      [config.name]: {
-        PROJECT_HOST: config.project_host,
-        PROJECT_NAMESPACE: config.project_namespace,
-        PROJECT_AUTH_TOKEN: decrypt(config.project_auth_token),
-        PROJECT_NAME: config.project_name,
-        PROJECT_APP_CONFIG: config.project_app_config,
-        PROJECT_REFERENCE: config.project_reference,
-        SERVER_HTTP_PORT: config.server_http_port,
-        SERVER_DEBUG_PORT: config.server_debug_port,
-        PROJECT_PREVIEW_BRANCH: config.project_preview_branch,
-        PROJECT_PREVIEW_SERVER: config.project_preview_server,
-        PROJECT_PREVIEW_SERVER_AUTH_TOKEN: config.project_preview_server_auth_token ? 
-          decrypt(config.project_preview_server_auth_token) : null,
-        // Include custom variables
-        ...customVariables
-      }
-    }
+    PROJECT_CONFIG_NAME: config.name,
+    PROJECT_HOST: config.project_host,
+    PROJECT_NAMESPACE: config.project_namespace,
+    PROJECT_AUTH_TOKEN: decrypt(config.project_auth_token),
+    PROJECT_NAME: config.project_name,
+    PROJECT_APP_CONFIG: config.project_app_config,
+    PROJECT_REFERENCE: config.project_reference,
+    SERVER_HTTP_PORT: config.server_http_port,
+    SERVER_DEBUG_PORT: config.server_debug_port,
+    PROJECT_PREVIEW_BRANCH: config.project_preview_branch,
+    PROJECT_PREVIEW_SERVER: config.project_preview_server,
+    PROJECT_PREVIEW_SERVER_AUTH_TOKEN: config.project_preview_server_auth_token ? 
+      decrypt(config.project_preview_server_auth_token) : null,
+    // Include custom variables
+    ...customVariables
   };
 
   console.log('🚀 SENDING CONFIG TO CLOUD RUN INSTANCE');

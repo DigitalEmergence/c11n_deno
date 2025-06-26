@@ -715,7 +715,6 @@ export class ConfigManager {
 
   getConfigWizardStep7() {
     const config = this.buildFinalConfig();
-    const mainConfig = config.configurations[config.defaultConfiguration.name];
     const customVars = this.configWizardData.config.custom_variables || {};
     
     return {
@@ -724,7 +723,7 @@ export class ConfigManager {
           <div class="config-summary">
             <h3 class="config-title">
               <span class="config-icon">⚙️</span>
-              ${config.defaultConfiguration.name}
+              ${config.PROJECT_CONFIG_NAME}
             </h3>
             <p class="config-subtitle">JSphere Configuration Summary</p>
           </div>
@@ -739,16 +738,16 @@ export class ConfigManager {
               <div class="config-grid">
                 <div class="config-item">
                   <span class="config-label">Repository:</span>
-                  <span class="config-value">${mainConfig.PROJECT_NAMESPACE}/${mainConfig.PROJECT_NAME}</span>
+                  <span class="config-value">${config.PROJECT_NAMESPACE}/${config.PROJECT_NAME}</span>
                 </div>
                 <div class="config-item">
                   <span class="config-label">App Config:</span>
-                  <span class="config-value">${mainConfig.PROJECT_APP_CONFIG}</span>
+                  <span class="config-value">${config.PROJECT_APP_CONFIG}</span>
                 </div>
-                ${mainConfig.PROJECT_REFERENCE ? `
+                ${config.PROJECT_REFERENCE ? `
                   <div class="config-item">
                     <span class="config-label">Reference:</span>
-                    <span class="config-value">${mainConfig.PROJECT_REFERENCE}</span>
+                    <span class="config-value">${config.PROJECT_REFERENCE}</span>
                   </div>
                 ` : ''}
               </div>
@@ -763,33 +762,33 @@ export class ConfigManager {
               <div class="config-grid">
                 <div class="config-item">
                   <span class="config-label">HTTP Port:</span>
-                  <span class="config-value">${mainConfig.SERVER_HTTP_PORT}</span>
+                  <span class="config-value">${config.SERVER_HTTP_PORT}</span>
                 </div>
                 <div class="config-item">
                   <span class="config-label">Debug Port:</span>
-                  <span class="config-value">${mainConfig.SERVER_DEBUG_PORT}</span>
+                  <span class="config-value">${config.SERVER_DEBUG_PORT}</span>
                 </div>
               </div>
             </div>
 
             <!-- Preview Settings -->
-            ${mainConfig.PROJECT_PREVIEW_BRANCH || mainConfig.PROJECT_PREVIEW_SERVER ? `
+            ${config.PROJECT_PREVIEW_BRANCH || config.PROJECT_PREVIEW_SERVER ? `
               <div class="config-section">
                 <h4 class="section-title">
                   <span class="section-icon">👁️</span>
                   Preview Settings
                 </h4>
                 <div class="config-grid">
-                  ${mainConfig.PROJECT_PREVIEW_BRANCH ? `
+                  ${config.PROJECT_PREVIEW_BRANCH ? `
                     <div class="config-item">
                       <span class="config-label">Preview Branch:</span>
-                      <span class="config-value">${mainConfig.PROJECT_PREVIEW_BRANCH}</span>
+                      <span class="config-value">${config.PROJECT_PREVIEW_BRANCH}</span>
                     </div>
                   ` : ''}
-                  ${mainConfig.PROJECT_PREVIEW_SERVER ? `
+                  ${config.PROJECT_PREVIEW_SERVER ? `
                     <div class="config-item">
                       <span class="config-label">Preview Server:</span>
-                      <span class="config-value">${mainConfig.PROJECT_PREVIEW_SERVER}</span>
+                      <span class="config-value">${config.PROJECT_PREVIEW_SERVER}</span>
                     </div>
                   ` : ''}
                 </div>
@@ -828,7 +827,7 @@ export class ConfigManager {
             </button>
             <div id="raw-config" class="collapsible-content" style="display: none;">
               <div class="config-preview">
-                <pre><code>${JSON.stringify(config, null, 2)}</code></pre>
+                <pre><code id="raw-config-json">Loading...</code></pre>
               </div>
             </div>
           </div>
@@ -1232,13 +1231,25 @@ export class ConfigManager {
     }
   }
 
-  toggleRawConfig() {
+  async toggleRawConfig() {
     const content = document.getElementById('raw-config');
     const arrow = document.querySelector('.raw-config-toggle .collapsible-arrow');
+    const jsonElement = document.getElementById('raw-config-json');
     
     if (content.style.display === 'none') {
       content.style.display = 'block';
       arrow.textContent = '▲';
+      
+      // Load the raw config with tokens when opening
+      if (jsonElement && jsonElement.textContent === 'Loading...') {
+        try {
+          const configWithTokens = await this.buildFinalConfigWithTokens();
+          jsonElement.textContent = JSON.stringify(configWithTokens, null, 2);
+        } catch (error) {
+          console.error('Failed to build config with tokens:', error);
+          jsonElement.textContent = JSON.stringify(this.buildFinalConfig(), null, 2);
+        }
+      }
     } else {
       content.style.display = 'none';
       arrow.textContent = '▼';
@@ -1479,30 +1490,65 @@ export class ConfigManager {
   buildFinalConfig() {
     const { config } = this.configWizardData;
     
-    // Keep the project name as-is (including the leading period if present)
-    const projectName = config.project_name;
+    // Clean project name - remove leading period if present
+    const cleanProjectName = config.project_name && config.project_name.startsWith('.') ? 
+      config.project_name.substring(1) : config.project_name;
     
-    // Build the configuration object in the required format
+    // Build the configuration object in the new flat format
     const finalConfig = {
-      defaultConfiguration: {
-        name: config.name,
-        disableCaching: true
-      },
-      configurations: {
-        [config.name]: {
-          PROJECT_HOST: "GitHub",
-          PROJECT_NAMESPACE: config.project_namespace,
-          PROJECT_NAME: projectName,
-          PROJECT_APP_CONFIG: config.project_app_config,
-          PROJECT_REFERENCE: config.project_reference || "",
-          SERVER_HTTP_PORT: config.server_http_port || "80",
-          SERVER_DEBUG_PORT: config.server_debug_port || "9229",
-          PROJECT_PREVIEW_BRANCH: config.project_preview_branch || "",
-          PROJECT_PREVIEW_SERVER: config.project_preview_server || "",
-          PROJECT_PREVIEW_SERVER_AUTH_TOKEN: config.project_preview_server_auth_token || "",
-          ...this.buildCustomVariables()
-        }
+      PROJECT_CONFIG_NAME: config.name,
+      PROJECT_HOST: "GitHub",
+      PROJECT_NAMESPACE: config.project_namespace,
+      PROJECT_NAME: cleanProjectName,
+      PROJECT_AUTH_TOKEN: config.project_auth_token || "",
+      PROJECT_APP_CONFIG: config.project_app_config,
+      PROJECT_REFERENCE: config.project_reference || "",
+      SERVER_HTTP_PORT: config.server_http_port || "80",
+      SERVER_DEBUG_PORT: config.server_debug_port || "9229",
+      PROJECT_PREVIEW_BRANCH: config.project_preview_branch || "",
+      PROJECT_PREVIEW_SERVER: config.project_preview_server || "",
+      PROJECT_PREVIEW_SERVER_AUTH_TOKEN: config.project_preview_server_auth_token || "",
+      ...this.buildCustomVariables()
+    };
+
+    return finalConfig;
+  }
+
+  async buildFinalConfigWithTokens() {
+    // For the raw config display, we need to show the actual tokens
+    // This is only used in the config wizard preview, not for storage
+    const { config } = this.configWizardData;
+    
+    // Clean project name - remove leading period if present
+    const cleanProjectName = config.project_name && config.project_name.startsWith('.') ? 
+      config.project_name.substring(1) : config.project_name;
+    
+    // Get the actual auth token (either from workspace or manual entry)
+    let authToken = "";
+    if (config.workspace_id) {
+      const workspace = this.getWorkspace(config.workspace_id);
+      if (workspace) {
+        authToken = "[WORKSPACE_TOKEN]"; // Don't show actual token in preview
       }
+    } else {
+      authToken = config.project_auth_token ? "[MANUAL_TOKEN]" : "";
+    }
+    
+    // Build the configuration object in the new flat format
+    const finalConfig = {
+      PROJECT_CONFIG_NAME: config.name,
+      PROJECT_HOST: "GitHub",
+      PROJECT_NAMESPACE: config.project_namespace,
+      PROJECT_NAME: cleanProjectName,
+      PROJECT_AUTH_TOKEN: authToken,
+      PROJECT_APP_CONFIG: config.project_app_config,
+      PROJECT_REFERENCE: config.project_reference || "",
+      SERVER_HTTP_PORT: config.server_http_port || "80",
+      SERVER_DEBUG_PORT: config.server_debug_port || "9229",
+      PROJECT_PREVIEW_BRANCH: config.project_preview_branch || "",
+      PROJECT_PREVIEW_SERVER: config.project_preview_server || "",
+      PROJECT_PREVIEW_SERVER_AUTH_TOKEN: config.project_preview_server_auth_token ? "[PREVIEW_TOKEN]" : "",
+      ...this.buildCustomVariables()
     };
 
     return finalConfig;

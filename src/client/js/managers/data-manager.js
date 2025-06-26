@@ -435,9 +435,12 @@ export class DataManager {
       'reconnect',
       'invalid_grant',
       'invalid_rapt',
+      'reauth related error',
       'token expired',
       'authentication expired',
       'unauthorized',
+      'failed to refresh access token',
+      'please reconnect your gcp account',
       '401'
     ];
     

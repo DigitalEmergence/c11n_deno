@@ -1408,7 +1408,7 @@
 /* Loading Spinner */
 .loading-spinner {
   width: 36px;
-  margin: 1rem;
+  /* margin: 1rem; */
   height: 36px;
   border: 2px solid #e5e7eb;
   border-top: 2px solid #3b82f6;

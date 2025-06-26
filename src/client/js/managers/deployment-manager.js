@@ -244,6 +244,14 @@ export class DeploymentManager {
           return false;
         }
         return true;
+      }).map(profile => {
+        // Ensure all required properties exist with defaults
+        return {
+          id: profile.id,
+          name: profile.name,
+          container_image_url: profile.container_image_url || 'No image',
+          ...profile
+        };
       });
       
       if (validServiceProfiles.length === 0) {

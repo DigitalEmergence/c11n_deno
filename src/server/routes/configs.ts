@@ -157,6 +157,10 @@ configRoutes.post("/api/configs", async (ctx) => {
     const encryptedPreviewToken = body.project_preview_server_auth_token ? 
       encrypt(body.project_preview_server_auth_token) : null;
 
+    // Clean project name - remove leading period if present
+    const cleanProjectName = body.project_name.startsWith('.') ? 
+      body.project_name.substring(1) : body.project_name;
+
     // Create the config
     await db.run(`
       MATCH (u:User {github_id: $userId})
@@ -187,7 +191,7 @@ configRoutes.post("/api/configs", async (ctx) => {
       project_host: "GitHub",
       project_namespace: project_namespace,
       project_auth_token: project_auth_token,
-      project_name: sanitizeInput(body.project_name),
+      project_name: sanitizeInput(cleanProjectName),
       project_app_config: sanitizeInput(body.project_app_config),
       project_reference: body.project_reference || "",
       server_http_port: body.server_http_port || "80",
@@ -549,5 +553,77 @@ configRoutes.get("/api/configs/workspace/:workspaceId/references", async (ctx) =
   } catch (error) {
     ctx.response.status = 500;
     ctx.response.body = { error: "Failed to fetch repository references" };
+  }
+});
+
+// Get config with decrypted tokens for JSphere configuration building
+configRoutes.get("/api/configs/:id/jsphere", async (ctx) => {
+  const userId = ctx.state.userId;
+  const configId = ctx.params.id;
+  
+  try {
+    const configs = await db.run(`
+      MATCH (u:User {github_id: $userId})-[:OWNS]->(c:JSphereConfig {id: $configId})
+      OPTIONAL MATCH (w:Workspace)-[:USED_BY]->(c)
+      RETURN c, w
+    `, { userId, configId });
+
+    if (configs.length === 0) {
+      ctx.response.status = 404;
+      ctx.response.body = { error: "Config not found" };
+      return;
+    }
+
+    const config = configs[0].c.properties;
+    const workspace = configs[0].w?.properties;
+
+    // Decrypt the auth token
+    let decryptedAuthToken = "";
+    if (workspace) {
+      // Config uses workspace credentials
+      decryptedAuthToken = decrypt(workspace.project_auth_token);
+    } else {
+      // Config uses manual credentials
+      decryptedAuthToken = decrypt(config.project_auth_token);
+    }
+
+    // Decrypt preview token if it exists
+    let decryptedPreviewToken = "";
+    if (config.project_preview_server_auth_token) {
+      decryptedPreviewToken = decrypt(config.project_preview_server_auth_token);
+    }
+
+    // Parse custom variables if they exist
+    let customVariables: Record<string, any> = {};
+    if (config.custom_variables) {
+      try {
+        const parsedVars = JSON.parse(config.custom_variables);
+        // Decrypt secure variables
+        for (const [key, value] of Object.entries(parsedVars)) {
+          if (typeof value === 'string' && value.startsWith('encrypted:')) {
+            customVariables[key] = decrypt(value as string);
+          } else {
+            customVariables[key] = value;
+          }
+        }
+      } catch (error) {
+        console.error('Failed to parse custom variables:', error);
+        customVariables = {};
+      }
+    }
+
+    // Return config with decrypted tokens for JSphere use
+    const jsphereConfig = {
+      ...config,
+      project_auth_token: decryptedAuthToken,
+      project_preview_server_auth_token: decryptedPreviewToken,
+      custom_variables: customVariables
+    };
+
+    ctx.response.body = { config: jsphereConfig };
+  } catch (error) {
+    console.error('Failed to fetch config for JSphere:', error);
+    ctx.response.status = 500;
+    ctx.response.body = { error: "Failed to fetch config" };
   }
 });
